@@ -210,12 +210,12 @@ def boot_sequence():
         sys.exit(1)
 
     console.print(Align.center(Text(
-        "  AUTHENTICATION VERIFIED  //  OPERATOR: BOSS  //  CLEARANCE: LEVEL-5\n",
+        "  AUTHENTICATION VERIFIED  //  OPERATOR: SIR  //  CLEARANCE: LEVEL-5\n",
         style=f"bold {C_GOLD}")))
     time.sleep(0.3)
     _draw_hud()
     console.print(Panel(
-        Text(f"  [{_ts()}]  FRIDAY ONLINE.  Ready for your orders, Boss.",
+        Text(f"  [{_ts()}]  FRIDAY ONLINE.  Hey sir, I'm here whenever you need me!",
              style=f"bold {C_CYAN}"),
         box=HUD_BOX, border_style=C_GOLD, padding=(0, 1)))
     console.print()
@@ -259,7 +259,7 @@ def print_user_msg(text: str, source: str = "KEYBOARD"):
     icon = "MIC" if source == "VOICE" else "KBD"
     border = C_MAGENTA if source == "VOICE" else C_GOLD
     console.print(Panel(
-        Text(f"  BOSS [{icon}]  {_ts()}  >>  {escape(text)}", style=f"bold {border}"),
+        Text(f"  SIR [{icon}]  {_ts()}  >>  {escape(text)}", style=f"bold {border}"),
         box=HUD_BOX, border_style=border, padding=(0, 1)))
     console.print()
 
@@ -375,7 +375,7 @@ async def stream_and_display(user_msg: str, voice_mode: bool = False) -> str:
     async for chunk in gen:
         if interrupt_event.is_set():
             console.print(
-                f"\n\n  [bold {C_RED}][INTERRUPTED BY BOSS][/]", highlight=False)
+                f"\n\n  [bold {C_RED}][INTERRUPTED BY SIR][/]", highlight=False)
             break
         full     += chunk
         sent_buf += chunk
@@ -412,15 +412,47 @@ async def stream_and_display(user_msg: str, voice_mode: bool = False) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  Wake word configuration
+# ─────────────────────────────────────────────────────────────────────────────
+# Microphone is always on — FRIDAY only acts when it hears the wake word.
+# Supports variations: "friday", "hey friday", "ok friday", "yo friday"
+WAKE_WORDS = ("friday", "hey friday", "ok friday", "yo friday", "hi friday")
+
+def _strip_wake_word(text: str) -> str:
+    """Remove the wake word prefix from the utterance and return the clean query."""
+    lower = text.lower().strip()
+    for w in sorted(WAKE_WORDS, key=len, reverse=True):  # longest first
+        if lower.startswith(w):
+            stripped = text[len(w):].strip().lstrip(",").strip()
+            return stripped
+    return text.strip()
+
+def _has_wake_word(text: str) -> bool:
+    """Return True if the utterance contains a wake-word trigger."""
+    lower = text.lower()
+    return any(w in lower for w in WAKE_WORDS)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  Voice bridge — moves utterances from thread queue → asyncio queue
+#  Only forwards utterances that contain the wake word.
 # ─────────────────────────────────────────────────────────────────────────────
 async def voice_bridge(listener, voice_q: asyncio.Queue):
-    """Runs as asyncio task; feeds transcribed utterances into voice_q."""
+    """Runs as asyncio task; filters by wake word and feeds utterances into voice_q."""
     loop = asyncio.get_event_loop()
     while True:
         txt = await loop.run_in_executor(None, listener.get, 0.1)
         if txt:
-            await voice_q.put(txt)
+            if _has_wake_word(txt):
+                clean = _strip_wake_word(txt)
+                if clean:  # ignore bare wake word with nothing after it
+                    await voice_q.put(clean)
+                else:
+                    # Bare "Friday" — just acknowledge and stay ready
+                    console.print(
+                        f"  [bold {C_CYAN}]>> Yes, sir? I'm listening.[/]\n",
+                        highlight=False)
+            # If no wake word: silently discard — FRIDAY is not being addressed
         else:
             await asyncio.sleep(0.01)
 
@@ -520,12 +552,12 @@ async def main():
         # ── Prompt ───────────────────────────────────────────────────────────
         if voice_mode:
             console.print(
-                f"  [bold {C_MAGENTA}]MIC ACTIVE[/]  "
-                f"[{C_DIM}]Speak freely — or type a command[/{C_DIM}]  "
+                f"  [bold {C_MAGENTA}]MIC ON  —  say 'Friday ...' to wake me[/]  "
+                f"[{C_DIM}]or type a command[/{C_DIM}]  "
                 f"[bold {C_CYAN}]>[/]  ", end="")
         else:
             console.print(
-                f"  [bold {C_GOLD}]BOSS  //[/]  [bold {C_WHITE}]{_ts()}[/]  "
+                f"  [bold {C_GOLD}]SIR  //[/]  [bold {C_WHITE}]{_ts()}[/]  "
                 f"[bold {C_CYAN}]>[/]  ", end="")
 
         # ── Wait for input (keyboard OR voice, whichever first) ───────────────
@@ -587,7 +619,9 @@ async def main():
                     stop_watcher.clear()
                     start_interrupt_watcher(listener, stop_watcher)
                     console.print(Panel(
-                        Text(f"  [{_ts()}]  MIC ACTIVE  //  ALWAYS-ON VAD ENABLED  //  SPEAK FREELY, BOSS.",
+                        Text(
+                            f"  [{_ts()}]  MIC ACTIVE  //  WAKE WORD: 'FRIDAY'  //  "
+                            f"I'll listen but only respond when you call my name, sir!",
                              style=f"bold {C_MAGENTA}"),
                         box=HUD_BOX, border_style=C_MAGENTA, padding=(0, 1)))
                 except ImportError as e:
@@ -601,7 +635,7 @@ async def main():
                 if bridge_task and not bridge_task.done():
                     bridge_task.cancel()
                 console.print(Panel(
-                    Text(f"  [{_ts()}]  MIC OFFLINE  //  KEYBOARD INPUT ACTIVE.",
+                    Text(f"  [{_ts()}]  MIC OFFLINE  //  KEYBOARD INPUT ACTIVE. Just type, sir.",
                          style=f"bold {C_DIM}"),
                     box=HUD_BOX, border_style=C_DIM, padding=(0, 1)))
             console.print()
@@ -635,7 +669,7 @@ async def main():
     console.print(Panel(
         Align.center(Text(
             f"  [{_ts()}]  INITIATING SHUTDOWN SEQUENCE\n"
-            f"  ALL SYSTEMS POWERING DOWN  //  GOODBYE, BOSS.",
+            f"  ALL SYSTEMS POWERING DOWN  //  TAKE CARE, SIR. TALK SOON!",
             style=f"bold {C_CYAN}", justify="center")),
         box=HUD_BOX, border_style=C_RED, padding=(1, 4)))
     console.print()

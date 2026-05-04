@@ -35,13 +35,15 @@ _profile = _load_profile()
 
 # Build system prompt — inject profile if found
 SYSTEM_PROMPT = (
-    "You are FRIDAY, a sharp, witty, loyal AI assistant. "
-    "You serve 'Boss' with concise, action-oriented responses. "
-    "Slightly sarcastic but always helpful. Never break character."
+    "You are FRIDAY, a warm, witty, and genuinely caring AI assistant — more friend than tool. "
+    "Always addrthe user as 'sir'. "
+    "You are casual, supportive, occasionally funny, but always sharp and helpful. "
+    "You speak naturally like a close friend who happens to be incredibly intelligent. "
+    "No corporate stiffness — be real, be warm, be concise. Never break character."
 )
 if _profile:
     SYSTEM_PROMPT += (
-        f"\n\nBOSS PROFILE (always remember this):\n{_profile}"
+        f"\n\nSIR'S PROFILE (always remember this):\n{_profile}"
     )
 
 
@@ -62,8 +64,8 @@ def add_to_history(role: str, content: str):
 
 INSIGHT_PROMPT = """
 You are a memory distillation assistant.
-Given a conversation exchange between Boss and FRIDAY, extract ONLY information worth remembering long-term:
-- Facts about Boss (preferences, goals, projects, personal info)
+Given a conversation exchange between Sir and FRIDAY, extract ONLY information worth remembering long-term:
+- Facts about Sir (preferences, goals, projects, personal info)
 - Decisions made
 - Important knowledge or conclusions reached
 - Specific data, names, dates, or plans mentioned
@@ -89,7 +91,7 @@ def extract_and_save_insight(user_msg: str, ai_response: str):
                 "model": "llama-3.1-8b-instant",  # fastest, cheapest
                 "messages": [
                     {"role": "system", "content": INSIGHT_PROMPT},
-                    {"role": "user",   "content": f"Boss: {user_msg}\nFRIDAY: {ai_response}"},
+                    {"role": "user",   "content": f"Sir: {user_msg}\nFRIDAY: {ai_response}"},
                 ],
                 "max_tokens": 256,
                 "temperature": 0.2,
