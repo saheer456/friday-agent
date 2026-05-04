@@ -165,7 +165,7 @@ class ContinuousListener:
         tmp = tempfile.mktemp(suffix=".wav")
         # Prime Whisper with domain vocabulary so it transcribes correctly
         PROMPT = (
-            "FRIDAY, Boss, RAG system, Groq, Python, cybersecurity, "
+            "FRIDAY, sir, RAG system, Groq, Python, cybersecurity, "
             "networking, Kerala, Saheer, open, search, weather, "
             "hey Friday, what is, tell me, can you"
         )

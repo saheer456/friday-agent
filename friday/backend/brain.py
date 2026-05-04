@@ -188,7 +188,7 @@ async def route_query(user_message: str) -> str:
                 import httpx as _hx
                 async with _hx.AsyncClient(timeout=5.0) as c:
                     await c.post("http://localhost:8000/api/open", json={"target": alias})
-                return f"Opening {alias}, Boss."
+                return f"Opening {alias} for you, sir."
         # Check for URL
         urls = _re.findall(r"(https?://\S+)", user_message)
         if urls:

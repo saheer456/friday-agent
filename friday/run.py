@@ -24,7 +24,7 @@ BANNER = (
     " | |   | | |\\ \\ _| |_| |_/ /| | | | / /\\ \\\\\n"
     " |_|   |_|_| \\_|_____|____/ |_| |_|/_/  \\_\\\\\n"
     "\n"
-    "  SYSTEMS ONLINE  |  GROQ BACKEND  |  KOKORO TTS  |  WAITING, BOSS.\n"
+    "  SYSTEMS ONLINE  |  GROQ BACKEND  |  KOKORO TTS  |  READY FOR YOU, SIR.\n"
 )
 
 def check_groq():
@@ -57,7 +57,7 @@ def main():
             "--reload"
         ])
     except KeyboardInterrupt:
-        print("\n\nFRIDAY signing off. Goodbye, Boss.")
+        print("\n\nFRIDAY signing off. Take care, sir!")
 
 if __name__ == "__main__":
     main()
