@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FRIDAY AI</title>
+    <meta name="description" content="FRIDAY — Voice-first AI assistant powered by Groq">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-state="idle">
+    <div class="bg-grid"></div>
+    <div class="bg-glow"></div>
+
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <span class="logo">FR<span class="logo-i">I</span>DAY</span>
+            <span class="version-tag">v2.0</span>
+        </div>
+        <div class="header-center">
+            <span class="online-dot"></span>
+            <span id="state-label" class="state-label">STANDBY</span>
+        </div>
+        <div class="header-right">
+            <div class="stat-chip">CPU <span id="cpu-val">--</span></div>
+            <div class="stat-chip">RAM <span id="ram-val">--</span></div>
+            <select id="model-select" class="model-select-pill"></select>
+            <button id="settings-btn" class="pill-btn" title="Settings">⚙</button>
+        </div>
+    </header>
+
+    <!-- Settings Drawer -->
+    <div id="settings-overlay" class="settings-overlay"></div>
+    <aside id="settings-panel" class="settings-panel">
+        <div class="settings-head">
+            <span>SETTINGS</span>
+            <button id="settings-close" class="pill-btn">✕</button>
+        </div>
+        <div class="settings-body">
+            <label class="s-label">UPTIME</label>
+            <div id="uptime-val" class="s-value">--</div>
+
+            <div class="s-divider"></div>
+
+            <!-- #15 Voice Speed -->
+            <label class="s-label">VOICE SPEED</label>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+                <input type="range" id="speed-slider" min="0.7" max="1.4" step="0.05" value="0.97"
+                    style="flex:1;accent-color:var(--purple);">
+                <span id="speed-val" style="font-family:var(--mono);font-size:11px;color:var(--purple);min-width:28px;">0.97</span>
+            </div>
+
+            <div class="s-divider"></div>
+
+            <label class="s-label">ACTIVE MODEL</label>
+            <div id="current-model-label" class="s-value groq-accent">loading...</div>
+            <button id="model-switch-btn" class="s-btn">SWITCH MODEL</button>
+            <div id="model-status" class="s-status"></div>
+
+            <div class="s-divider"></div>
+
+            <!-- #9 Tasks -->
+            <label class="s-label">PENDING TASKS</label>
+            <div id="tasks-list" class="s-value" style="font-size:12px;line-height:1.8;">Loading...</div>
+
+            <div class="s-divider"></div>
+
+            <!-- #6 Memory browser -->
+            <label class="s-label">MEMORIES
+                <span id="mem-count" style="color:var(--muted);margin-left:6px;"></span>
+            </label>
+            <div id="memories-list" style="margin-top:6px;display:flex;flex-direction:column;gap:6px;"></div>
+
+            <div class="s-divider"></div>
+
+            <label class="s-label">RAG DATA INGESTION</label>
+            <div class="drop-zone" id="drop-zone">Drop files to ingest into RAG</div>
+            <button id="ingest-btn" class="s-btn">FORCE INGEST DIRECTORY</button>
+        </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+        <!-- Voice Orb -->
+        <div class="voice-hero">
+            <div class="orb-wrap">
+                <canvas id="waveform-canvas" width="320" height="320"></canvas>
+                <div class="rings">
+                    <div class="ring ring-1"></div>
+                    <div class="ring ring-2"></div>
+                    <div class="ring ring-3"></div>
+                </div>
+                <button id="mic-btn" class="mic-orb" title="Tap to speak">
+                    <svg id="mic-icon" viewBox="0 0 24 24" width="40" height="40" stroke="currentColor" stroke-width="1.5" fill="none">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                        <line x1="12" y1="19" x2="12" y2="23"/>
+                        <line x1="8" y1="23" x2="16" y2="23"/>
+                    </svg>
+                    <svg id="stop-icon" viewBox="0 0 24 24" width="40" height="40" fill="currentColor" style="display:none">
+                        <rect x="5" y="5" width="14" height="14" rx="3"/>
+                    </svg>
+                </button>
+            </div>
+            <p id="voice-hint" class="voice-hint">Tap to speak with FRIDAY</p>
+        </div>
+
+        <!-- Transcript -->
+        <div class="transcript-wrap">
+            <div class="transcript" id="chat-container">
+                <div class="message system">
+                    <div class="msg-content">Systems online, Boss. I'm listening.</div>
+                </div>
+            </div>
+            <div class="input-bar">
+                <button id="type-mic-btn" class="input-mic" title="Voice input">
+                    <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                        <line x1="12" y1="19" x2="12" y2="23"/>
+                        <line x1="8" y1="23" x2="16" y2="23"/>
+                    </svg>
+                </button>
+                <input type="text" id="msg-input" placeholder="Or type a message..." autocomplete="off">
+                <button id="send-btn" class="send-btn">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

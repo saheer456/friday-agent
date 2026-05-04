@@ -1,0 +1,74 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+*.pyo
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+MANIFEST
+
+# ── Virtual Environments ──────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+.env/
+
+# ── Environment Variables (SECRET — never commit!) ────────────────────────────
+.env
+*.env
+!.env.example
+
+# ── AI Model Files (large binary — download separately) ──────────────────────
+*.onnx
+*.bin
+*.pt
+*.pth
+*.safetensors
+*.gguf
+*.ggml
+
+# ── ChromaDB / VectorStore (runtime-generated) ────────────────────────────────
+friday/vectorstore/
+vectorstore/
+
+# ── Data (personal files — keep locally) ─────────────────────────────────────
+friday/data/conversations/
+data/
+
+# ── Logs & Runtime ────────────────────────────────────────────────────────────
+*.log
+*.pid
+logs/
+*.tmp
+*.temp
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── HuggingFace Cache (large, re-downloadable) ───────────────────────────────
+.cache/huggingface/
+huggingface/
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
