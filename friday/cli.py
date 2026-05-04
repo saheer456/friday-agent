@@ -1,11 +1,15 @@
 """
-cli.py  —  F.R.I.D.A.Y  Holographic Terminal Interface
-Iron Man / J.A.R.V.I.S aesthetic  |  Always-on VAD voice  |  Interruptible TTS
+cli.py  —  F.R.I.D.A.Y  Terminal Interface
+Always-on VAD voice  |  Interruptible TTS  |  Streaming LLM
 """
 
 # ── Encoding fix — MUST be first ──────────────────────────────────────────────
-import io, os, sys
+import io, os, sys, warnings
 os.environ["PYTHONIOENCODING"] = "utf-8"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"       # suppress HF tokenizer warning
+os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"         # suppress HF telemetry
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"     # suppress Loading weights bar
+warnings.filterwarnings("ignore", category=FutureWarning)  # suppress HF deprecation warnings
 if hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "buffer"):
@@ -290,7 +294,9 @@ def start_interrupt_watcher(listener, stop_watcher: threading.Event):
 # ─────────────────────────────────────────────────────────────────────────────
 async def handle_query(text: str, source: str = "KEYBOARD", voice_mode: bool = False):
     _log("user", text)
-    print_user_msg(text, source)
+    # Only print user message for voice input — keyboard input is already visible after the prompt
+    if source == "VOICE":
+        print_user_msg(text, source)
     interrupt_event.clear()
 
     try:

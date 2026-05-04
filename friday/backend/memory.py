@@ -81,8 +81,8 @@ def save_memory(user_msg: str, ai_response: str) -> None:
         try:
             # mem0 takes the full conversation turn and auto-extracts entities/facts
             messages = [
-                {"role": "user",      "content": user_msg},
-                {"role": "assistant", "content": ai_response},
+                {"role": "user",      "content": user_msg[:500]},
+                {"role": "assistant", "content": ai_response[:500]},
             ]
             result = m.add(messages, user_id=USER_ID)
             if result and result.get("results"):
@@ -105,7 +105,7 @@ def recall_memory(query: str, top_k: int = 5) -> str:
     if m is None:
         return ""
     try:
-        results = m.search(query, user_id=USER_ID, limit=top_k)
+        results = m.search(query, filters={"user_id": USER_ID}, limit=top_k)
         memories = results.get("results", []) if isinstance(results, dict) else results
         if not memories:
             return ""
@@ -122,7 +122,7 @@ def get_all_memories() -> list[dict]:
     if m is None:
         return []
     try:
-        results = m.get_all(user_id=USER_ID)
+        results = m.get_all(filters={"user_id": USER_ID})
         memories = results.get("results", []) if isinstance(results, dict) else results
         return memories or []
     except Exception as e:
