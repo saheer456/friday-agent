@@ -345,7 +345,7 @@ async def main():
     while True:
         # ── Prompt ───────────────────────────────────────────────────────────
         if voice_mode:
-            console.print(f"\n  [bold {C_MAGENTA}](Voice)[/] [bold {C_GOLD}]You[/] > ", end="")
+            console.print(f"\n  [{C_DIM}]Listening...[/{C_DIM}] ", end="")
         else:
             console.print(f"\n  [bold {C_GOLD}]You[/] > ", end="")
 

@@ -24,6 +24,10 @@ DEFAULT_SPEED = float(os.getenv("FRIDAY_TTS_SPEED", "1.1"))
 KOKORO_MODEL_PATH = os.getenv("FRIDAY_TTS_MODEL", "kokoro-v1.0.onnx")
 KOKORO_VOICES_PATH = os.getenv("FRIDAY_TTS_VOICES", "voices-v1.0.bin")
 
+# Also check common alternate model filename
+if not os.path.exists(KOKORO_MODEL_PATH) and os.path.exists("tts-1-hd"):
+    KOKORO_MODEL_PATH = "tts-1-hd"
+
 _kokoro      = None
 _kokoro_disabled = False
 _pygame_init = False
@@ -170,7 +174,7 @@ async def synthesize(text: str, speed: float | None = None) -> tuple[bytes, str]
         return b"", ".mp3"
 
     speed = _clamp_speed(speed)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(None, _synth_kokoro_sync, cleaned, speed)
         return result
@@ -179,12 +183,3 @@ async def synthesize(text: str, speed: float | None = None) -> tuple[bytes, str]
         return await _synth_edge(cleaned, speed)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Legacy alias (keeps main.py / FastAPI route happy)
-# ─────────────────────────────────────────────────────────────────────────────
-async def synthesize_wav(text: str) -> bytes:
-    """Legacy: returns WAV bytes (edge-tts → empty if Kokoro unavailable)."""
-    data, suffix = await synthesize(text)
-    if suffix == ".wav":
-        return data
-    return b""                  # caller handles empty gracefully
