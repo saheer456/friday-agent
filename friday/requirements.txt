@@ -1,9 +1,5 @@
-fastapi
 requests
-uvicorn[standard]
 httpx
-websockets
-python-multipart
 psutil
 pyaudio
 audioop-lts
@@ -29,6 +25,5 @@ Pillow
 pyperclip
 youtube-transcript-api
 python-dotenv
-groq
 rich
 mem0ai

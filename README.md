@@ -2,7 +2,6 @@
 
 <div align="center">
   <img src="https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white" />
-  <img src="https://img.shields.io/badge/FastAPI-0.110%2B-009688?logo=fastapi&logoColor=white" />
   <img src="https://img.shields.io/badge/Groq-LLM_API-F55036?logo=groq&logoColor=white" />
   <img src="https://img.shields.io/badge/ChromaDB-RAG-6B4EFF" />
   <img src="https://img.shields.io/badge/License-MIT-green" />
@@ -10,13 +9,13 @@
 
 ---
 
-**FRIDAY** is a fully local, voice-first AI assistant powered by Groq's ultra-fast LLM API. Think J.A.R.V.I.S. — it listens, thinks, speaks back, remembers context, searches the web, reads your screen, manages files, and runs on your machine.
+**FRIDAY** is a fully local, voice-first AI assistant powered by Groq's ultra-fast LLM API. It listens, thinks, speaks back, remembers context, searches the web, reads your screen, manages files, and runs entirely in your terminal.
 
 ## ✨ Features
 
 | # | Feature | How |
 |---|---------|-----|
-| 1 | **Streaming AI chat** | Groq (llama-3.3-70b) via WebSocket |
+| 1 | **Streaming AI chat** | Groq (llama-3.3-70b) direct to terminal |
 | 2 | **Screenshot + Vision** | Groq Llama-4-Scout multimodal |
 | 3 | **Open apps / URLs** | `subprocess` + webbrowser |
 | 4 | **RAG personal memory** | LangChain + ChromaDB + HuggingFace embeddings |
@@ -28,9 +27,7 @@
 | 10 | **Clipboard reader** | `pyperclip` |
 | 11 | **URL scraper** | `readability-lxml` + BeautifulSoup |
 | 12 | **Always-on VAD** | WebRTC VAD + faster-whisper (Whisper Small) |
-| 13 | **Neural TTS** | Kokoro ONNX (local) → edge-tts → browser fallback |
-| 14 | **Model switcher** | Live Groq model selection from UI |
-| 15 | **File upload ingestion** | Drag-and-drop → instant RAG |
+| 13 | **Neural TTS** | Kokoro ONNX (local) → edge-tts fallback |
 
 ## 🚀 Quick Start
 
@@ -72,19 +69,14 @@ kokoro-v1.0.onnx
 voices-v1.0.bin
 ```
 
-Then set `TTS_BACKEND=kokoro` in `.env`. Without Kokoro, FRIDAY uses Microsoft Edge TTS (online) or browser speech.
+Then set `TTS_BACKEND=kokoro` in `.env`. Without Kokoro, FRIDAY uses Microsoft Edge TTS (online) fallback.
 
 ### 4. Run FRIDAY
 
 ```bash
 # From the friday/ directory:
-python run.py
-
-# Or directly:
-python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+python cli.py
 ```
-
-Open **http://localhost:8000** in your browser.
 
 ## 📁 Project Structure
 
@@ -93,26 +85,19 @@ friday-agent/
 ├── friday/                     # Main application package
 │   ├── backend/
 │   │   ├── __init__.py
-│   │   ├── main.py             # FastAPI app & all API endpoints
 │   │   ├── brain.py            # Groq LLM + routing + memory
 │   │   ├── rag.py              # LangChain + ChromaDB ingestion & retrieval
 │   │   ├── voice_in.py         # Always-on VAD + faster-whisper STT
-│   │   ├── voice_out.py        # Audio playback helper
 │   │   ├── tts.py              # Kokoro / edge-tts synthesis
 │   │   ├── search.py           # DuckDuckGo web search
 │   │   ├── scraper.py          # URL content scraper
-│   │   └── system.py           # CPU/RAM stats
-│   ├── frontend/
-│   │   ├── index.html          # Futuristic HUD UI
-│   │   ├── style.css
-│   │   └── app.js
+│   │   ├── tools.py            # Local capability tools (weather, etc)
+│   │   └── memory.py           # mem0 wrapper for long-term memory
 │   ├── data/                   # Your personal documents (gitignored)
 │   │   └── profile.txt         # Boss profile — always injected in context
 │   ├── vectorstore/            # ChromaDB store (gitignored, auto-generated)
 │   ├── requirements.txt
-│   ├── run.py                  # Launch script
 │   ├── cli.py                  # CLI mode
-│   ├── start.bat               # Windows one-click launch
 │   └── .env.example
 ├── .gitignore
 ├── LICENSE
@@ -127,21 +112,23 @@ See [`.env.example`](friday/.env.example) for all options.
 |----------|---------|-------------|
 | `GROQ_API_KEY` | — | **Required.** Get one at console.groq.com |
 | `GROQ_MODEL` | `llama-3.3-70b-versatile` | Active Groq model |
-| `TTS_BACKEND` | `browser` | `browser` / `kokoro` / `edge` |
+| `TTS_BACKEND` | `kokoro` | `kokoro` / `edge` |
 | `FRIDAY_VOICE` | `bf_emma` | Kokoro voice ID |
 | `FRIDAY_TTS_SPEED` | `1.1` | Speech rate (0.7–1.4) |
+| `FRIDAY_LAT` | `28.6` | Latitude for weather lookups |
+| `FRIDAY_LON` | `77.2` | Longitude for weather lookups |
 
 ## 🏗️ Architecture
 
 ```
-Browser ─── WebSocket ──→ FastAPI (brain.py)
-                               │
-              ┌────────────────┼────────────────────┐
-              ▼                ▼                    ▼
-         Groq LLM        ChromaDB RAG         Tools / APIs
-     (stream tokens)   (personal memory)  (weather/apps/web)
-              │
-         voice_out ──→ TTS Engine (Kokoro / edge-tts)
+Terminal (cli.py) ──→ LLM Engine (brain.py)
+        │                      │
+        │             ┌────────┼────────────┐
+        ▼             ▼        ▼            ▼
+   voice_in.py    Groq LLM  ChromaDB      Tools
+   (VAD + STT)            (rag/memory)  (weather/apps)
+        │
+   tts.py ──→ Terminal Audio Player
 ```
 
 ## 📦 Dependencies
@@ -152,7 +139,6 @@ Key packages — see [`requirements.txt`](friday/requirements.txt) for the full 
 - **RAG**: `langchain`, `langchain-chroma`, `sentence-transformers`, `chromadb`
 - **STT**: `faster-whisper`, `webrtcvad-wheels`, `pyaudio`
 - **TTS**: `kokoro-onnx`, `edge-tts`, `pygame`, `soundfile`
-- **Web**: `fastapi`, `uvicorn[standard]`
 - **Tools**: `duckduckgo-search`, `beautifulsoup4`, `pillow`, `pyperclip`
 
 ## 🤝 Contributing

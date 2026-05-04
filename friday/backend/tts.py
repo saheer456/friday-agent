@@ -19,7 +19,7 @@ import tempfile
 import threading
 import time
 
-VOICE = os.getenv("FRIDAY_VOICE", "bf_emma")
+VOICE = os.getenv("FRIDAY_VOICE", "af_bella")
 DEFAULT_SPEED = float(os.getenv("FRIDAY_TTS_SPEED", "1.1"))
 KOKORO_MODEL_PATH = os.getenv("FRIDAY_TTS_MODEL", "kokoro-v1.0.onnx")
 KOKORO_VOICES_PATH = os.getenv("FRIDAY_TTS_VOICES", "voices-v1.0.bin")
@@ -39,6 +39,10 @@ def clean_for_speech(text: str) -> str:
     text = re.sub(r"[*_]{1,2}", "", text)
     text = re.sub(r"\[(.*?)\]\(.*?\)", r"\1", text)
     text = re.sub(r"[#>]", "", text)
+    # Remove tables, repeated punctuation, split numbers
+    text = re.sub(r'\|\s*-+\s*\|', '', text)  # tables
+    text = re.sub(r'([!?.])\1+', r'\1', text)  # !!! → !
+    text = re.sub(r'(\d{3,})', r' \1 ', text)  # numbers spaced
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 

@@ -55,7 +55,8 @@ def _save_hash(h: str):
 
 
 def _file_hash(path: str) -> str:
-    return hashlib.sha256(open(path, "rb").read()).hexdigest()
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
 
 
 # ── Ingestion ─────────────────────────────────────────────────────────────────

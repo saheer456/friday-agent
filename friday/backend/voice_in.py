@@ -38,7 +38,7 @@ VAD_MODE           = 3     # 0=permissive … 3=aggressive (max noise rejection)
 START_RING         = 20    # frames in start-ring  (~600 ms)
 START_RATIO        = 0.75  # 75% voiced → start collecting (harder to false-trigger)
 END_RING           = 30    # frames in end-ring    (~900 ms)
-END_RATIO          = 0.85  # 85% silent  → utterance done
+END_RATIO          = 0.92  # 92% silent  → utterance done (less clipping)
 PREROLL_FRAMES     = 10    # 300 ms pre-roll before voice trigger
 MIN_SPEECH_FRAMES  = 10    # discard blips shorter than 300 ms
 
@@ -162,12 +162,14 @@ class ContinuousListener:
             p.terminate()
 
     def _transcribe(self, pcm: bytes) -> str:
-        tmp = tempfile.mktemp(suffix=".wav")
+        tmp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        tmp = tmp_file.name
+        tmp_file.close()
         # Prime Whisper with domain vocabulary so it transcribes correctly
         PROMPT = (
             "FRIDAY, sir, RAG system, Groq, Python, cybersecurity, "
             "networking, Kerala, Saheer, open, search, weather, "
-            "hey Friday, what is, tell me, can you"
+            "what is, tell me, can you"
         )
         try:
             with wave.open(tmp, "wb") as wf:
@@ -182,7 +184,7 @@ class ContinuousListener:
                 beam_size=5,
                 initial_prompt=PROMPT,  # primes vocabulary context
                 vad_filter=True,        # Whisper's own VAD as second pass
-                vad_parameters=dict(min_silence_duration_ms=300),
+                vad_parameters=dict(min_silence_duration_ms=500),
             )
             return " ".join(s.text for s in segs).strip()
         except Exception:
@@ -194,50 +196,4 @@ class ContinuousListener:
                 pass
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Legacy helpers (kept for backward compat with main.py / FastAPI routes)
-# ─────────────────────────────────────────────────────────────────────────────
-def record_audio(output_filename=None, threshold=500, silence_duration=2.0) -> str:
-    import tempfile
-    if output_filename is None:
-        output_filename = os.path.join(tempfile.gettempdir(), "friday_input.wav")
-    try:
-        import audioop
-    except ModuleNotFoundError:
-        import audioop_lts as audioop
 
-    CHUNK = 1024
-    p     = pyaudio.PyAudio()
-    stream = p.open(format=pyaudio.paInt16, channels=1, rate=16000,
-                    input=True, frames_per_buffer=CHUNK)
-    frames, silent_chunks, started = [], 0, False
-    max_silent = int(silence_duration * 16000 / CHUNK)
-
-    while True:
-        data = stream.read(CHUNK, exception_on_overflow=False)
-        frames.append(data)
-        rms = audioop.rms(data, 2)
-        if rms > threshold:
-            started, silent_chunks = True, 0
-        elif started:
-            silent_chunks += 1
-        if started and silent_chunks > max_silent:
-            break
-
-    stream.stop_stream(); stream.close(); p.terminate()
-    with wave.open(output_filename, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(p.get_sample_size(pyaudio.paInt16))
-        wf.setframerate(16000)
-        wf.writeframes(b"".join(frames))
-    return output_filename
-
-
-def transcribe_audio(audio_path: str) -> str:
-    try:
-        from faster_whisper import WhisperModel
-        model = WhisperModel("base", device="cpu", compute_type="int8")
-        segs, _ = model.transcribe(audio_path, beam_size=5)
-        return " ".join(s.text for s in segs).strip()
-    except Exception as e:
-        return f"Transcription error: {e}"

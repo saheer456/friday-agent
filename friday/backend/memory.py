@@ -61,7 +61,7 @@ def _get_memory():
                 _memory = Memory.from_config(MEM0_CONFIG)
                 print("[Memory] mem0 graph memory initialised.")
             except Exception as e:
-                print(f"[Memory] mem0 init failed: {e}")
+                print(f"\n[Memory] ⚠ CRITICAL ERROR ⚠\n[Memory] mem0 init failed! All memory features will be disabled.\n[Memory] Error details: {e}\n")
                 _memory = None
     return _memory
 
