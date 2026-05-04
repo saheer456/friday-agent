@@ -12,6 +12,7 @@ Two public functions used by brain.py:
 """
 
 import os
+import sys
 import threading
 from pathlib import Path
 
@@ -26,9 +27,9 @@ MEM0_CONFIG = {
     "llm": {
         "provider": "groq",
         "config": {
-            "model": "llama-3.1-8b-instant",   # fastest + cheapest for extraction
-            "temperature": 0.1,                 # low temp = factual extraction
-            "max_tokens": 1000,
+            "model": "llama-3.1-8b-instant",
+            "temperature": 0.1,
+            "max_tokens": 200,
         },
     },
     "embedder": {
@@ -56,13 +57,17 @@ def _get_memory():
         return _memory
     with _mem_lock:
         if _memory is None:  # double-checked locking
+            import io as _io
+            _devnull = _io.StringIO()
+            _old_out, _old_err = sys.stdout, sys.stderr
             try:
+                sys.stdout, sys.stderr = _devnull, _devnull
                 from mem0 import Memory
                 _memory = Memory.from_config(MEM0_CONFIG)
-                print("[Memory] mem0 graph memory initialised.")
-            except Exception as e:
-                print(f"\n[Memory] ⚠ CRITICAL ERROR ⚠\n[Memory] mem0 init failed! All memory features will be disabled.\n[Memory] Error details: {e}\n")
+            except Exception:
                 _memory = None
+            finally:
+                sys.stdout, sys.stderr = _old_out, _old_err
     return _memory
 
 
@@ -78,19 +83,20 @@ def save_memory(user_msg: str, ai_response: str) -> None:
         m = _get_memory()
         if m is None:
             return
+        import io as _io
+        _devnull = _io.StringIO()
+        _old_out, _old_err = sys.stdout, sys.stderr
         try:
-            # mem0 takes the full conversation turn and auto-extracts entities/facts
+            sys.stdout, sys.stderr = _devnull, _devnull
             messages = [
-                {"role": "user",      "content": user_msg[:500]},
-                {"role": "assistant", "content": ai_response[:500]},
+                {"role": "user",      "content": user_msg[:150]},
+                {"role": "assistant", "content": ai_response[:150]},
             ]
-            result = m.add(messages, user_id=USER_ID)
-            if result and result.get("results"):
-                saved = [r["memory"] for r in result["results"] if r.get("event") in ("ADD", "UPDATE")]
-                if saved:
-                    print(f"[Memory] Stored {len(saved)} memory item(s).")
-        except Exception as e:
-            print(f"[Memory] save error: {e}")
+            m.add(messages, user_id=USER_ID)
+        except Exception:
+            pass
+        finally:
+            sys.stdout, sys.stderr = _old_out, _old_err
 
     threading.Thread(target=_run, daemon=True, name="friday-mem0-save").start()
 

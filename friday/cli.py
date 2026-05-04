@@ -4,12 +4,17 @@ Always-on VAD voice  |  Interruptible TTS  |  Streaming LLM
 """
 
 # ── Encoding fix — MUST be first ──────────────────────────────────────────────
-import io, os, sys, warnings
+import io, os, sys, warnings, logging
 os.environ["PYTHONIOENCODING"] = "utf-8"
-os.environ["TOKENIZERS_PARALLELISM"] = "false"       # suppress HF tokenizer warning
-os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"         # suppress HF telemetry
-os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"     # suppress Loading weights bar
-warnings.filterwarnings("ignore", category=FutureWarning)  # suppress HF deprecation warnings
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+# Silence noisy loggers from HF / mem0 / spaCy
+for _logger_name in ("huggingface_hub", "sentence_transformers", "mem0", "chromadb", "spacy"):
+    logging.getLogger(_logger_name).setLevel(logging.ERROR)
 if hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "buffer"):
