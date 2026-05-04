@@ -38,6 +38,9 @@ ENV/
 friday/vectorstore/
 vectorstore/
 
+# ── mem0 graph memory store (personal data — keep locally) ───────────────────
+friday/data/mem0_store/
+
 # ── Data (personal files — keep locally) ─────────────────────────────────────
 friday/data/conversations/
 data/

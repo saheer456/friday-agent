@@ -31,3 +31,4 @@ youtube-transcript-api
 python-dotenv
 groq
 rich
+mem0ai

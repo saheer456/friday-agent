@@ -6,15 +6,12 @@ import httpx
 import json
 import re
 import os
-import threading
-from datetime import datetime
 from pathlib import Path
-from . import rag, search, scraper
+from . import rag, search, scraper, memory as mem
 
 GROQ_URL  = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 DATA_DIR  = Path(__file__).resolve().parent.parent / "data"
-CONV_DIR  = DATA_DIR / "conversations"
 
 # ── Load user profile (always in context — no RAG search needed) ──────────────
 def _load_profile() -> str:
@@ -47,14 +44,15 @@ if _profile:
     )
 
 
-# Conversation history — capped at 6 messages (~3 turns) to stay token-efficient
+# Conversation history — capped at 20 messages (10 turns)
 conversation_history: list[dict] = []
+MAX_HISTORY = 20
 
 
 def _trim_history():
     global conversation_history
-    if len(conversation_history) > 6:
-        conversation_history = conversation_history[-6:]
+    if len(conversation_history) > MAX_HISTORY:
+        conversation_history = conversation_history[-MAX_HISTORY:]
 
 
 def add_to_history(role: str, content: str):
@@ -62,71 +60,6 @@ def add_to_history(role: str, content: str):
     _trim_history()
 
 
-INSIGHT_PROMPT = """
-You are a memory distillation assistant.
-Given a conversation exchange between Sir and FRIDAY, extract ONLY information worth remembering long-term:
-- Facts about Sir (preferences, goals, projects, personal info)
-- Decisions made
-- Important knowledge or conclusions reached
-- Specific data, names, dates, or plans mentioned
-
-If the conversation contains nothing worth remembering (e.g. small talk, greetings, simple Q&A with no lasting value), respond with exactly: NONE
-
-Otherwise write a concise bullet-point summary (no preamble, just the bullets).
-"""
-
-def extract_and_save_insight(user_msg: str, ai_response: str):
-    """
-    Asks Groq to distil only useful insights from the exchange.
-    Saves to data/conversations/ and re-ingests only if something noteworthy was found.
-    Runs in a background thread — never blocks the main response.
-    """
-    def _run():
-        try:
-            api_key = os.getenv("GROQ_API_KEY", "")
-            if not api_key:
-                return
-
-            payload = {
-                "model": "llama-3.1-8b-instant",  # fastest, cheapest
-                "messages": [
-                    {"role": "system", "content": INSIGHT_PROMPT},
-                    {"role": "user",   "content": f"Sir: {user_msg}\nFRIDAY: {ai_response}"},
-                ],
-                "max_tokens": 256,
-                "temperature": 0.2,
-                "stream": False,
-            }
-            import httpx as _hx
-            resp = _hx.post(
-                GROQ_URL,
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json=payload,
-                timeout=15.0,
-            )
-            resp.raise_for_status()
-            insight = resp.json()["choices"][0]["message"]["content"].strip()
-
-            if not insight or insight.upper() == "NONE":
-                print("[Memory] No useful insight — skipping save.")
-                return
-
-            # Save and ingest
-            os.makedirs(CONV_DIR, exist_ok=True)
-            ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filepath = CONV_DIR / f"insight_{ts}.md"
-            filepath.write_text(
-                f"# Insight — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                f"{insight}\n",
-                encoding="utf-8",
-            )
-            print(f"[Memory] Saved insight: {filepath.name}")
-            rag.ingest_files()
-
-        except Exception as e:
-            print(f"[Memory] Error: {e}")
-
-    threading.Thread(target=_run, daemon=True).start()
 
 
 async def route_query(user_message: str) -> str:
@@ -248,6 +181,12 @@ async def stream_response(user_message: str, voice_mode: bool = False):
         return
 
     tool_context = await route_query(user_message)
+
+    # ── Auto-recall relevant long-term memories (runs every query) ────────────
+    recalled = mem.recall_memory(user_message, top_k=5)
+    if recalled:
+        tool_context = f"LONG-TERM MEMORIES (about sir):\n{recalled}\n\n{tool_context}".strip()
+
     add_to_history("user", user_message)
 
     system_content = SYSTEM_PROMPT
@@ -271,7 +210,7 @@ async def stream_response(user_message: str, voice_mode: bool = False):
         "model":       model,
         "messages":    messages,
         "stream":      True,
-        "max_tokens":  200 if voice_mode else 1024,
+        "max_tokens":  400 if voice_mode else 1200,
         "temperature": 0.7,
     }
 
@@ -306,4 +245,5 @@ async def stream_response(user_message: str, voice_mode: bool = False):
 
     if full_response and not full_response.startswith("[Error:"):
         add_to_history("assistant", full_response)
-        extract_and_save_insight(user_message, full_response)
+        # mem0 saves + deduplicates in background — replaces old flat insight system
+        mem.save_memory(user_message, full_response)
