@@ -98,8 +98,8 @@ class ContinuousListener:
     def _load_whisper(self):
         if self._whisper is None:
             from faster_whisper import WhisperModel
-            # "base" — fast on CPU (~0.5s per utterance). "small" is more accurate but 3x slower.
-            self._whisper = WhisperModel("base", device="cpu", compute_type="int8")
+            # "small" is slower than "base" but gives noticeably better command accuracy.
+            self._whisper = WhisperModel("small", device="cpu", compute_type="int8")
         return self._whisper
 
     def _listen_loop(self):
@@ -181,7 +181,7 @@ class ContinuousListener:
             segs, _ = model.transcribe(
                 tmp,
                 language="en",          # force English — faster, more accurate
-                beam_size=3,
+                beam_size=5,
                 initial_prompt=PROMPT,  # primes vocabulary context
                 vad_filter=True,        # Whisper's own VAD as second pass
                 vad_parameters=dict(min_silence_duration_ms=500),
@@ -194,6 +194,4 @@ class ContinuousListener:
                 os.unlink(tmp)
             except OSError:
                 pass
-
-
 

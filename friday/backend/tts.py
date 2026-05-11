@@ -19,7 +19,7 @@ import tempfile
 import threading
 import time
 
-VOICE = os.getenv("FRIDAY_VOICE", "af_bella")
+VOICE = os.getenv("FRIDAY_VOICE", "af_heart")
 DEFAULT_SPEED = float(os.getenv("FRIDAY_TTS_SPEED", "1.1"))
 KOKORO_MODEL_PATH = os.getenv("FRIDAY_TTS_MODEL", "kokoro-v1.0.onnx")
 KOKORO_VOICES_PATH = os.getenv("FRIDAY_TTS_VOICES", "voices-v1.0.bin")
@@ -181,5 +181,4 @@ async def synthesize(text: str, speed: float | None = None) -> tuple[bytes, str]
     except Exception as e:
         print(f"[TTS] Kokoro failed ({e}) — using edge-tts")
         return await _synth_edge(cleaned, speed)
-
 
