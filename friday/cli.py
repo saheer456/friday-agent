@@ -152,27 +152,50 @@ def _split_sentences(buf: str) -> tuple[list[str], str]:
 #  TTS consumer — plays sentences as soon as they arrive
 # ─────────────────────────────────────────────────────────────────────────────
 async def _tts_consumer(tts_q: asyncio.Queue):
-    """Background task: synthesize and play each sentence in order."""
+    """Background task: synthesize and play each sentence in order.
+    Uses a worker queue to pre-buffer synthesis while playing.
+    """
     try:
         from backend.tts import synthesize, play_interruptible
     except ImportError:
         return
 
     loop = asyncio.get_running_loop()
+    
+    # Queue to hold running synthesis tasks
+    audio_tasks = asyncio.Queue()
+    
+    # Worker: Instantly pulls text and starts synthesizing in the background
+    async def synthesizer_worker():
+        while True:
+            sentence = await tts_q.get()
+            if sentence is None:
+                await audio_tasks.put(None)
+                break
+            if interrupt_event.is_set():
+                continue
+            # Spawn the synthesis task and put it in the audio queue
+            task = asyncio.create_task(synthesize(sentence))
+            await audio_tasks.put(task)
+            
+    synth_worker = asyncio.create_task(synthesizer_worker())
+
+    # Player loop: Pulls the pre-synthesized tasks and plays them sequentially
     while True:
-        sentence = await tts_q.get()
-        if sentence is None:        # sentinel — done
+        task = await audio_tasks.get()
+        if task is None:
             break
-        if interrupt_event.is_set():
-            continue                # drain queue but skip playback
+            
         try:
-            audio, suffix = await synthesize(sentence)
+            audio, suffix = await task
             if audio and not interrupt_event.is_set():
                 await loop.run_in_executor(
                     None, play_interruptible, audio, interrupt_event, suffix
                 )
         except Exception as e:
             console.print(f"  [{C_DIM}]TTS Error: {e}[/]")
+            
+    synth_worker.cancel()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -336,6 +359,37 @@ def do_ingest():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  Audio Visualizer
+# ─────────────────────────────────────────────────────────────────────────────
+def get_audio_spectrum(frame: bytes) -> str:
+    """Returns a string of bars representing the FFT spectrum."""
+    try:
+        import numpy as np
+        from scipy.fft import fft
+    except ImportError:
+        return ""
+        
+    if not frame:
+        return ""
+    
+    audio = np.frombuffer(frame, dtype=np.int16).astype(np.float32) / 32768.0
+    # Quick RMS check to save CPU if silent
+    if np.sqrt(np.mean(audio ** 2)) < 0.002:
+        return ""
+        
+    fft_result = np.abs(fft(audio))[:len(audio)//2]
+    
+    if len(fft_result) == 0 or np.sum(fft_result) == 0:
+        return ""
+        
+    # Normalize to 0-8 for bar chart
+    normalized = (fft_result / np.max(fft_result) * 8).astype(int)
+    
+    blocks = [" ", " ", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
+    bars = "".join(blocks[min(8, bar)] for bar in normalized[::15])
+    return bars
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  Main
 # ─────────────────────────────────────────────────────────────────────────────
 async def main():
@@ -356,18 +410,30 @@ async def main():
     while True:
         # ── Prompt ───────────────────────────────────────────────────────────
         if voice_mode:
-            console.print(f"\n  [{C_DIM}]Listening...[/{C_DIM}] ", end="")
+            # Visualizer will handle printing the prompt
+            pass
         else:
             console.print(f"\n  [bold {C_GOLD}]You[/] > ", end="")
 
         # ── Wait for input (keyboard OR voice, whichever first) ───────────────
         kbd_task   = asyncio.create_task(kbd_q.get())
         voice_task = asyncio.create_task(voice_q.get())
+        
+        async def display_visualizer():
+            sys.stdout.write("\n")
+            while True:
+                if voice_mode and listener and hasattr(listener, 'latest_frame'):
+                    bars = get_audio_spectrum(listener.latest_frame)
+                    sys.stdout.write(f"\r  \033[90mListening...\033[0m \033[36m{bars:<30}\033[0m")
+                    sys.stdout.flush()
+                await asyncio.sleep(0.05)
+                
+        vis_task = asyncio.create_task(display_visualizer()) if voice_mode else None
 
         pending: set
         if voice_mode:
             done, pending = await asyncio.wait(
-                [kbd_task, voice_task], return_when=asyncio.FIRST_COMPLETED)
+                [kbd_task, voice_task, vis_task], return_when=asyncio.FIRST_COMPLETED)
         else:
             done, pending = await asyncio.wait(
                 [kbd_task], return_when=asyncio.FIRST_COMPLETED)
@@ -375,6 +441,11 @@ async def main():
             voice_task.cancel()
 
         # Cancel the task that didn't win
+        if vis_task:
+            vis_task.cancel()
+            sys.stdout.write("\r" + " " * 60 + "\r") # Clear the visualizer line
+            sys.stdout.flush()
+            
         for t in pending:
             t.cancel()
             try:

@@ -139,11 +139,11 @@ def _get_kokoro():
     return _kokoro
 
 
-def _synth_kokoro_sync(text: str, speed: float) -> tuple[bytes, str]:
+def _synth_kokoro_sync(text: str, speed: float, voice: str = VOICE) -> tuple[bytes, str]:
     """Returns (wav_bytes, '.wav')"""
     import soundfile as sf
     kokoro = _get_kokoro()
-    samples, sr = kokoro.create(text, voice=VOICE, speed=speed, lang="en-us")
+    samples, sr = kokoro.create(text, voice=voice, speed=speed, lang="en-us")
     buf = io.BytesIO()
     sf.write(buf, samples, sr, format="WAV")
     return buf.getvalue(), ".wav"
@@ -181,4 +181,42 @@ async def synthesize(text: str, speed: float | None = None) -> tuple[bytes, str]
     except Exception as e:
         print(f"[TTS] Kokoro failed ({e}) — using edge-tts")
         return await _synth_edge(cleaned, speed)
+
+
+async def synthesize_with_options(
+    text: str,
+    voice: str = None,
+    emotion: str = "neutral",
+    speed: float = None
+) -> tuple[bytes, str]:
+    """Enhanced synthesis with personality.
+    Emotion modifies speed, voice overrides default.
+    """
+    emotion_params = {
+        "happy":       {"speed": 1.15},
+        "sad":         {"speed": 0.85},
+        "professional": {"speed": 1.0},
+        "excited":     {"speed": 1.25},
+    }
+    
+    params = emotion_params.get(emotion, emotion_params["neutral"])
+    base_speed = _clamp_speed(speed)
+    final_speed = base_speed * params["speed"]
+    
+    # Check if voice is overridden
+    target_voice = voice if voice else VOICE
+    
+    cleaned = clean_for_speech(text)
+    if not cleaned:
+        return b"", ".mp3"
+        
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(
+            None, _synth_kokoro_sync, cleaned, final_speed, target_voice
+        )
+        return result
+    except Exception as e:
+        print(f"[TTS] Kokoro failed ({e}) — using edge-tts fallback")
+        return await _synth_edge(cleaned, final_speed)
 
