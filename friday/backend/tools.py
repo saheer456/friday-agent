@@ -146,3 +146,57 @@ async def ingest_url(url: str) -> dict:
         return {"status": "success", "words": len(text.split()), "url": url}
     except Exception as e:
         return {"error": str(e)}
+
+def send_email(to: str, subject: str, body: str) -> dict:
+    """Opens the default email client with pre-filled details."""
+    import urllib.parse
+    try:
+        # Construct the mailto URI
+        subject_encoded = urllib.parse.quote(subject)
+        body_encoded = urllib.parse.quote(body)
+        mailto_url = f"mailto:{to}?subject={subject_encoded}&body={body_encoded}"
+        
+        # Open default mail client
+        os.startfile(mailto_url)
+        return {"status": "success", "message": "Opened email client with draft."}
+    except Exception as e:
+        return {"error": str(e)}
+
+def add_calendar_event(title: str, start_time_str: str, duration_minutes: int = 60, location: str = "") -> dict:
+    """Generates an .ics file and opens it in the default calendar app.
+    start_time_str format: YYYY-MM-DD HH:MM:SS
+    """
+    import tempfile
+    from datetime import datetime, timedelta
+    try:
+        start_dt = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S")
+        end_dt = start_dt + timedelta(minutes=duration_minutes)
+        
+        # Format for ICS: YYYYMMDDTHHMMSS
+        fmt = "%Y%m%dT%H%M%S"
+        start_ics = start_dt.strftime(fmt)
+        end_ics = end_dt.strftime(fmt)
+        
+        # Basic ICS structure
+        ics_content = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//FRIDAY AI//Calendar Integration//EN
+BEGIN:VEVENT
+DTSTART:{start_ics}
+DTEND:{end_ics}
+SUMMARY:{title}
+LOCATION:{location}
+END:VEVENT
+END:VCALENDAR
+"""
+        # Save to temp file
+        fd, path = tempfile.mkstemp(suffix=".ics")
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(ics_content)
+            
+        # Open with default calendar app
+        os.startfile(path)
+        return {"status": "success", "message": "Opened calendar app to save event."}
+    except Exception as e:
+        return {"error": str(e)}
+

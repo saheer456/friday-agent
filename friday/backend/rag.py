@@ -2,15 +2,14 @@
 rag.py
 Document ingestion and RAG using LangChain + ChromaDB.
 Embeddings: HuggingFace all-MiniLM-L6-v2 (local, no Ollama needed, ~90MB one-time download).
+
+All heavy imports are deferred inside functions so `import rag` is near-instant.
 """
 import os
 import hashlib
 from pathlib import Path
-
-from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2txtLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
+# NOTE: LangChain / HuggingFace / ChromaDB imports are LAZY (inside functions)
+#       to keep startup time near-zero.
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 BASE_DIR        = Path(__file__).resolve().parent.parent
@@ -26,6 +25,7 @@ _embeddings = None
 def _get_embeddings():
     global _embeddings
     if _embeddings is None:
+        from langchain_huggingface import HuggingFaceEmbeddings  # lazy import
         print("Loading embedding model (first run downloads ~90 MB)…")
         _embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2",
@@ -37,7 +37,8 @@ def _get_embeddings():
 
 
 # ── ChromaDB helpers ─────────────────────────────────────────────────────────
-def _vectorstore() -> Chroma:
+def _vectorstore():
+    from langchain_chroma import Chroma  # lazy import
     os.makedirs(VECTORSTORE_DIR, exist_ok=True)
     return Chroma(persist_directory=str(VECTORSTORE_DIR), embedding_function=_get_embeddings())
 
@@ -62,6 +63,8 @@ def _file_hash(path: str) -> str:
 # ── Ingestion ─────────────────────────────────────────────────────────────────
 def ingest_files():
     """Scan data/ and ingest any new documents into ChromaDB (skips duplicates)."""
+    from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2txtLoader  # lazy
+    from langchain_text_splitters import RecursiveCharacterTextSplitter  # lazy
     os.makedirs(DATA_DIR, exist_ok=True)
     vs      = _vectorstore()
     hashes  = _get_hashes()

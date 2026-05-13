@@ -10,6 +10,8 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+os.environ["HF_HUB_VERBOSITY"] = "error"
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 # Silence noisy loggers from HF / mem0 / spaCy
@@ -25,6 +27,7 @@ import random
 import threading
 import time
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 
 # ── Path / env ────────────────────────────────────────────────────────────────
@@ -33,6 +36,9 @@ sys.path.insert(0, str(HERE))
 os.chdir(HERE)
 from dotenv import load_dotenv
 load_dotenv(HERE / ".env")
+
+from backend.voice_dashboard import render_voice_pipeline_panel
+from backend.voice_state import PipelineStage, VoicePipelineModel
 
 # ── Rich ──────────────────────────────────────────────────────────────────────
 from rich.console import Console
@@ -46,8 +52,10 @@ from rich.live    import Live
 from rich.markup  import escape
 from rich         import box
 
-# ── Internal ──────────────────────────────────────────────────────────────────
-from backend import brain, rag
+# ── Internal ─────────────────────────────────────────────────────────────────
+# Deferred: backend is imported AFTER boot banner shows to minimize perceived lag
+brain = None
+rag   = None
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Theme
@@ -74,6 +82,9 @@ interrupt_event = threading.Event()
 # Holds the active ContinuousListener so TTS consumer can update echo reference
 _active_listener = None
 
+# Live voice pipeline dashboard (Rich) + STT hooks
+voice_pipeline_viz = None
+
 # In-memory chat log
 chat_log: list[dict] = []
 
@@ -95,12 +106,25 @@ def hud_command_bar() -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 def boot_sequence():
     console.clear()
-    key = os.getenv("GROQ_API_KEY", "")
-    if not key or "your_" in key:
-        console.print(f"  [bold {C_RED}]FATAL: GROQ_API_KEY not set in .env[/]")
+    try:
+        from backend.brain import _chat_stream_config
+    except Exception:
+        console.print(f"  [bold {C_RED}]FATAL: could not load brain module[/]")
         sys.exit(1)
 
-    console.print(f"\n  [bold {C_CYAN}]F.R.I.D.A.Y ONLINE[/]  //  {_ts()}  //  GROQ API CONNECTED\n")
+    _url, key, model, provider = _chat_stream_config()
+    if not key or "your_" in key.lower():
+        console.print(
+            f"  [bold {C_RED}]FATAL: no LLM API key for {provider}.[/]\n"
+            f"  [{C_DIM}]Set OPENROUTER_API_KEY (and optional OPENROUTER_MODEL) or GROQ_API_KEY in .env[/]"
+        )
+        sys.exit(1)
+
+    console.print(
+        f"\n  [bold {C_CYAN}]F.R.I.D.A.Y ONLINE[/]  //  {_ts()}  //  "
+        f"[bold {C_GREEN}]{provider}[/]  [dim]·[/dim]  [bold {C_WHITE}]{model}[/]"
+    )
+    console.print(f"  [{C_DIM}]Loading modules...[/{C_DIM}]\n")
     console.print(hud_command_bar())
     console.print()
 
@@ -110,11 +134,18 @@ def boot_sequence():
 # ─────────────────────────────────────────────────────────────────────────────
 def show_status():
     console.print(f"\n  [bold {C_GOLD}]SYSTEM STATUS[/]")
+    try:
+        from backend.brain import _chat_stream_config
+        _u, _k, active_model, active_provider = _chat_stream_config()
+    except Exception:
+        active_model, active_provider = "?", "?"
+
     rows = [
-        ("GROQ API",        os.getenv("GROQ_MODEL", "?")),
+        ("LLM BACKEND",     f"{active_provider} / {active_model}"),
         ("VECTOR STORE",    "CHROMA-DB LOCAL"),
-        ("WHISPER STT",     "SMALL INT8 CPU"),
+        ("WHISPER STT",     os.getenv("FRIDAY_WHISPER_MODEL", "small") + " " + os.getenv("FRIDAY_WHISPER_COMPUTE", "int8")),
         ("VAD ENGINE",      "WEBRTC 30ms"),
+        ("TTS BACKEND",     os.getenv("FRIDAY_TTS_BACKEND", "auto")),
         ("EDGE-TTS",        "en-GB-SoniaNeural"),
         ("MEMORY",          f"{len(chat_log)} msgs in session"),
     ]
@@ -158,84 +189,121 @@ def _split_sentences(buf: str) -> tuple[list[str], str]:
 # ─────────────────────────────────────────────────────────────────────────────
 #  TTS consumer — plays sentences as soon as they arrive
 # ─────────────────────────────────────────────────────────────────────────────
-async def _tts_consumer(tts_q: asyncio.Queue):
-    """Background task: synthesize and play each sentence in order.
-    Uses a worker queue to pre-buffer synthesis while playing.
-    """
+async def _tts_consumer(tts_q: asyncio.Queue, viz: VoicePipelineModel | None = None):
+    """Background task: synthesize and play each sentence in order."""
     try:
-        from backend.tts import synthesize, play_interruptible, _last_audio_bytes as _tts_ref
+        from backend.tts import synthesize, play_interruptible
     except ImportError:
         return
 
     loop = asyncio.get_running_loop()
-    audio_tasks = asyncio.Queue()
+    audio_tasks: asyncio.Queue = asyncio.Queue()
 
     async def synthesizer_worker():
         while True:
             sentence = await tts_q.get()
             if sentence is None:
-                await audio_tasks.put(None)
+                await audio_tasks.put((None, None))
                 break
             if interrupt_event.is_set():
                 continue
             task = asyncio.create_task(synthesize(sentence))
-            await audio_tasks.put(task)
+            await audio_tasks.put((sentence, task))
 
     synth_worker = asyncio.create_task(synthesizer_worker())
 
-    while True:
-        task = await audio_tasks.get()
-        if task is None:
-            break
+    try:
+        while True:
+            sentence, task = await audio_tasks.get()
+            if sentence is None:
+                break
+            try:
+                if viz:
+                    viz.set_tts_backend(os.getenv("FRIDAY_TTS_BACKEND", "auto"))
+                    viz.set_stage(PipelineStage.TTS_SYNTHESIZING)
+                    viz.set_tts_sentence(sentence[:400])
+                audio, suffix, echo_pcm = await task
+                if audio and not interrupt_event.is_set():
+                    if _active_listener and echo_pcm:
+                        _active_listener.tts_reference_frame = echo_pcm[:960]
+                    elif _active_listener:
+                        _active_listener.tts_reference_frame = b""
+                    if viz:
+                        viz.set_stage(PipelineStage.TTS_PLAYING)
+                    await loop.run_in_executor(
+                        None,
+                        partial(play_interruptible, audio, interrupt_event, suffix, echo_pcm),
+                    )
+            except Exception as e:
+                console.print(f"  [{C_DIM}]TTS Error: {e}[/]")
+                if viz:
+                    viz.set_error(str(e))
+    finally:
+        synth_worker.cancel()
         try:
-            audio, suffix = await task
-            if audio and not interrupt_event.is_set():
-                # Update echo reference on active listener before playback
-                if _active_listener and audio:
-                    _active_listener.tts_reference_frame = audio[:960]
-                await loop.run_in_executor(
-                    None, play_interruptible, audio, interrupt_event, suffix
-                )
-        except Exception as e:
-            console.print(f"  [{C_DIM}]TTS Error: {e}[/]")
-
-    synth_worker.cancel()
+            await synth_worker
+        except asyncio.CancelledError:
+            pass
+    if viz:
+        viz.clear_tts_sentence()
+        viz.set_stage(PipelineStage.LISTENING)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Streaming response + sentence-streaming TTS (zero extra lag)
 # ─────────────────────────────────────────────────────────────────────────────
-async def stream_and_display(user_msg: str, voice_mode: bool = False) -> str:
+async def stream_and_display(
+    user_msg: str, voice_mode: bool = False, viz: VoicePipelineModel | None = None
+) -> str:
     """
     Stream tokens from Groq while simultaneously:
       - Printing them to the terminal live
       - Splitting into sentences and queuing them for TTS playback
     """
-    full     = ""
+
+    def _reset_viz_after_stream():
+        if not viz:
+            return
+        viz.clear_llm_buf()
+        viz.set_stage(PipelineStage.LISTENING if voice_mode else PipelineStage.IDLE)
+
+    if viz:
+        viz.set_stage(PipelineStage.LLM_STREAMING)
+        viz.clear_llm_buf()
+
+    full = ""
     sent_buf = ""
-    tts_q    = asyncio.Queue() if voice_mode else None
-    tts_task = asyncio.create_task(_tts_consumer(tts_q)) if voice_mode else None
+    tts_q = asyncio.Queue() if voice_mode else None
+    tts_task = asyncio.create_task(_tts_consumer(tts_q, viz)) if voice_mode else None
 
     gen = brain.stream_response(user_msg, voice_mode=voice_mode)
-    
+
     with console.status(f"  [{C_CYAN}]Thinking...[/]", spinner="dots"):
         try:
             first = await gen.__anext__()
         except StopAsyncIteration:
-            if tts_q: await tts_q.put(None)
+            if tts_q:
+                await tts_q.put(None)
+            _reset_viz_after_stream()
             return ""
 
     if interrupt_event.is_set():
-        if tts_q: await tts_q.put(None)
+        if tts_q:
+            await tts_q.put(None)
+        _reset_viz_after_stream()
         return ""
 
-    # Print response header
-    console.print(f"  [bold {C_CYAN}]FRIDAY >[/] ", end="")
+    # Print response header — leading \n ensures we're on a fresh line
+    # (user's typed text occupies the 'You > ' line; this separates cleanly)
+    console.print(f"\n  [bold {C_CYAN}]FRIDAY[/] [dim]>[/dim] ", end="")
+    console.file.flush()
 
     # Stream + collect sentences
     for chunk in [first]:
         full += chunk
         sent_buf += chunk
+        if viz:
+            viz.append_llm_token(chunk)
         console.print(chunk, end="", style=C_WHITE, highlight=False)
 
     async for chunk in gen:
@@ -243,8 +311,10 @@ async def stream_and_display(user_msg: str, voice_mode: bool = False) -> str:
             console.print(
                 f"\n\n  [bold {C_RED}][INTERRUPTED BY SIR][/]", highlight=False)
             break
-        full     += chunk
+        full += chunk
         sent_buf += chunk
+        if viz:
+            viz.append_llm_token(chunk)
         console.print(chunk, end="", style=C_WHITE, highlight=False)
 
         if tts_q:
@@ -259,16 +329,17 @@ async def stream_and_display(user_msg: str, voice_mode: bool = False) -> str:
         await tts_q.put(sent_buf.strip())
 
     console.print()
-    console.print()
 
     # Signal TTS consumer to finish
     if tts_q:
         await tts_q.put(None)
 
+    # ── Visual separator between exchanges ───────────────────────────────────
     console.print()
+    console.print(Rule(style="grey30", characters="─"))
     console.print()
-    console.print(Rule(style=C_CYAN, characters="─"))
-    console.print()
+
+    _reset_viz_after_stream()
 
     # Wait for TTS to finish (or be interrupted)
     if tts_task:
@@ -292,6 +363,14 @@ async def voice_bridge(listener, voice_q: asyncio.Queue):
             await voice_q.put(txt.strip())
         else:
             await asyncio.sleep(0.01)
+
+
+async def _voice_dashboard_tick(live: Live, stop: asyncio.Event):
+    """Refresh Rich Live panel while waiting for voice or keyboard input."""
+    while not stop.is_set():
+        if voice_pipeline_viz is not None:
+            live.update(render_voice_pipeline_panel(voice_pipeline_viz))
+        await asyncio.sleep(0.12)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -331,9 +410,12 @@ async def handle_query(text: str, source: str = "KEYBOARD", voice_mode: bool = F
         print_user_msg(text, source)
     interrupt_event.clear()
 
+    viz = voice_pipeline_viz if voice_mode else None
+    if viz:
+        viz.clear_error()
+
     try:
-        # voice_mode=True → TTS streams sentence-by-sentence inside
-        response = await stream_and_display(text, voice_mode=voice_mode)
+        response = await stream_and_display(text, voice_mode=voice_mode, viz=viz)
     except Exception as e:
         console.print(f"  [bold {C_RED}]ERROR: {escape(str(e))}[/]")
         return
@@ -397,7 +479,16 @@ def get_audio_spectrum(frame: bytes) -> str:
 #  Main
 # ─────────────────────────────────────────────────────────────────────────────
 async def main():
+    global brain, rag, voice_pipeline_viz
+
     boot_sequence()
+
+    # ── Deferred backend import (after banner shows — hides startup lag) ───────
+    with console.status(f"  [{C_DIM}]Initializing systems...[/{C_DIM}]", spinner="dots"):
+        from backend import brain as _brain, rag as _rag
+        brain = _brain
+        rag   = _rag
+    console.print(f"  [{C_GREEN}]✓ Systems ready.[/{C_GREEN}]\n")
 
     # Shared queues
     kbd_q:   asyncio.Queue = asyncio.Queue()
@@ -412,50 +503,50 @@ async def main():
     asyncio.create_task(keyboard_reader(kbd_q))
 
     while True:
+        # ── Drain stale keyboard input (typed while FRIDAY was thinking) ───────
+        if not voice_mode:
+            while not kbd_q.empty():
+                try: kbd_q.get_nowait()
+                except Exception: pass
+
         # ── Prompt ───────────────────────────────────────────────────────────
-        if voice_mode:
-            # Visualizer will handle printing the prompt
-            pass
-        else:
+        if not voice_mode:
+            # Use Rich console + explicit flush for correct ANSI state tracking
             console.print(f"\n  [bold {C_GOLD}]You[/] > ", end="")
+            console.file.flush()
 
-        # ── Wait for input (keyboard OR voice, whichever first) ───────────────
-        kbd_task   = asyncio.create_task(kbd_q.get())
+        # ── Wait for input (keyboard OR voice, optional Live dashboard) ───────
+        kbd_task = asyncio.create_task(kbd_q.get())
         voice_task = asyncio.create_task(voice_q.get())
-        
-        async def display_visualizer():
-            """Animate spectrum inline. Only draws when audio is active."""
-            while True:
-                if _active_listener and hasattr(_active_listener, 'latest_frame'):
-                    bars = get_audio_spectrum(_active_listener.latest_frame)
-                    label = f"  \033[90mListening...\033[0m \033[36m{bars:<30}\033[0m" if bars else f"  \033[90mListening...\033[0m"
-                    sys.stdout.write(f"\r{label}")
-                    sys.stdout.flush()
-                await asyncio.sleep(0.05)
+        dash_task = None
 
-        vis_task = asyncio.create_task(display_visualizer()) if voice_mode else None
-        if voice_mode:
-            sys.stdout.write("\n")
-
-        pending: set
-        if voice_mode:
-            done, pending = await asyncio.wait(
-                [kbd_task, voice_task, vis_task], return_when=asyncio.FIRST_COMPLETED)
+        if voice_mode and voice_pipeline_viz is not None:
+            dash_stop = asyncio.Event()
+            with Live(
+                render_voice_pipeline_panel(voice_pipeline_viz),
+                refresh_per_second=8,
+                console=console,
+                transient=True,
+            ) as live:
+                dash_task = asyncio.create_task(_voice_dashboard_tick(live, dash_stop))
+                try:
+                    done, pending = await asyncio.wait(
+                        [kbd_task, voice_task, dash_task],
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    dash_stop.set()
+                    if dash_task:
+                        dash_task.cancel()
+                        try:
+                            await dash_task
+                        except asyncio.CancelledError:
+                            pass
         else:
             done, pending = await asyncio.wait(
-                [kbd_task], return_when=asyncio.FIRST_COMPLETED)
-            # cancel voice_task since we didn't really use it
+                [kbd_task], return_when=asyncio.FIRST_COMPLETED
+            )
             voice_task.cancel()
-
-        # Cancel the task that didn't win
-        if vis_task:
-            vis_task.cancel()
-            try:
-                await vis_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            sys.stdout.write("\r" + " " * 60 + "\r")
-            sys.stdout.flush()
 
         for t in pending:
             t.cancel()
@@ -464,9 +555,11 @@ async def main():
             except (asyncio.CancelledError, Exception):
                 pass
 
-        # Determine which task completed and what the source was
-        # Filter vis_task out — it should never be the source of input
-        completed = next((t for t in done if t is not vis_task), None)
+        completed = None
+        for t in done:
+            if t is not dash_task:
+                completed = t
+                break
         if completed is None:
             continue
         try:
@@ -496,15 +589,20 @@ async def main():
             if voice_mode:
                 try:
                     from backend.voice_in import ContinuousListener
+
+                    if voice_pipeline_viz is None:
+                        voice_pipeline_viz = VoicePipelineModel()
                     if listener is None:
-                        listener = ContinuousListener()
+                        listener = ContinuousListener(viz=voice_pipeline_viz)
                     listener.start()
                     globals()["_active_listener"] = listener
                     if bridge_task is None or bridge_task.done():
                         bridge_task = asyncio.create_task(voice_bridge(listener, voice_q))
                     stop_watcher.clear()
                     start_interrupt_watcher(listener, stop_watcher)
-                    console.print(f"  [bold {C_MAGENTA}]Voice Mode Activated — Listening...[/]")
+                    console.print(
+                        f"  [bold {C_MAGENTA}]Voice Mode ON — Live pipeline panel while listening.[/]"
+                    )
                 except ImportError as e:
                     console.print(f"  [bold {C_RED}]VAD not available: {e}[/]")
                     voice_mode = False
