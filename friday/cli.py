@@ -71,6 +71,9 @@ console = Console(highlight=False, markup=True)
 # Set this to immediately stop active TTS playback AND streaming
 interrupt_event = threading.Event()
 
+# Holds the active ContinuousListener so TTS consumer can update echo reference
+_active_listener = None
+
 # In-memory chat log
 chat_log: list[dict] = []
 
@@ -115,6 +118,10 @@ def show_status():
         ("EDGE-TTS",        "en-GB-SoniaNeural"),
         ("MEMORY",          f"{len(chat_log)} msgs in session"),
     ]
+    if _active_listener:
+        rows.append(("UTTERANCES",   str(_active_listener._utterance_count)))
+        rows.append(("LAST STT",     f"{_active_listener._last_transcription_ms:.0f}ms"))
+        rows.append(("NOISE GATE",   f"{_active_listener.dynamic_threshold:.5f}"))
     for name, metric in rows:
         console.print(f"  [{C_CYAN}]{name:<15}[/] : [{C_WHITE}]{metric}[/]")
     console.print()
@@ -156,16 +163,13 @@ async def _tts_consumer(tts_q: asyncio.Queue):
     Uses a worker queue to pre-buffer synthesis while playing.
     """
     try:
-        from backend.tts import synthesize, play_interruptible
+        from backend.tts import synthesize, play_interruptible, _last_audio_bytes as _tts_ref
     except ImportError:
         return
 
     loop = asyncio.get_running_loop()
-    
-    # Queue to hold running synthesis tasks
     audio_tasks = asyncio.Queue()
-    
-    # Worker: Instantly pulls text and starts synthesizing in the background
+
     async def synthesizer_worker():
         while True:
             sentence = await tts_q.get()
@@ -174,27 +178,27 @@ async def _tts_consumer(tts_q: asyncio.Queue):
                 break
             if interrupt_event.is_set():
                 continue
-            # Spawn the synthesis task and put it in the audio queue
             task = asyncio.create_task(synthesize(sentence))
             await audio_tasks.put(task)
-            
+
     synth_worker = asyncio.create_task(synthesizer_worker())
 
-    # Player loop: Pulls the pre-synthesized tasks and plays them sequentially
     while True:
         task = await audio_tasks.get()
         if task is None:
             break
-            
         try:
             audio, suffix = await task
             if audio and not interrupt_event.is_set():
+                # Update echo reference on active listener before playback
+                if _active_listener and audio:
+                    _active_listener.tts_reference_frame = audio[:960]
                 await loop.run_in_executor(
                     None, play_interruptible, audio, interrupt_event, suffix
                 )
         except Exception as e:
             console.print(f"  [{C_DIM}]TTS Error: {e}[/]")
-            
+
     synth_worker.cancel()
 
 
@@ -420,15 +424,18 @@ async def main():
         voice_task = asyncio.create_task(voice_q.get())
         
         async def display_visualizer():
-            sys.stdout.write("\n")
+            """Animate spectrum inline. Only draws when audio is active."""
             while True:
-                if voice_mode and listener and hasattr(listener, 'latest_frame'):
-                    bars = get_audio_spectrum(listener.latest_frame)
-                    sys.stdout.write(f"\r  \033[90mListening...\033[0m \033[36m{bars:<30}\033[0m")
+                if _active_listener and hasattr(_active_listener, 'latest_frame'):
+                    bars = get_audio_spectrum(_active_listener.latest_frame)
+                    label = f"  \033[90mListening...\033[0m \033[36m{bars:<30}\033[0m" if bars else f"  \033[90mListening...\033[0m"
+                    sys.stdout.write(f"\r{label}")
                     sys.stdout.flush()
                 await asyncio.sleep(0.05)
-                
+
         vis_task = asyncio.create_task(display_visualizer()) if voice_mode else None
+        if voice_mode:
+            sys.stdout.write("\n")
 
         pending: set
         if voice_mode:
@@ -443,9 +450,13 @@ async def main():
         # Cancel the task that didn't win
         if vis_task:
             vis_task.cancel()
-            sys.stdout.write("\r" + " " * 60 + "\r") # Clear the visualizer line
+            try:
+                await vis_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            sys.stdout.write("\r" + " " * 60 + "\r")
             sys.stdout.flush()
-            
+
         for t in pending:
             t.cancel()
             try:
@@ -453,7 +464,11 @@ async def main():
             except (asyncio.CancelledError, Exception):
                 pass
 
-        completed = list(done)[0]
+        # Determine which task completed and what the source was
+        # Filter vis_task out — it should never be the source of input
+        completed = next((t for t in done if t is not vis_task), None)
+        if completed is None:
+            continue
         try:
             user_input = completed.result()
         except Exception:
@@ -484,9 +499,9 @@ async def main():
                     if listener is None:
                         listener = ContinuousListener()
                     listener.start()
+                    globals()["_active_listener"] = listener
                     if bridge_task is None or bridge_task.done():
                         bridge_task = asyncio.create_task(voice_bridge(listener, voice_q))
-                    # Start instant-interrupt watcher
                     stop_watcher.clear()
                     start_interrupt_watcher(listener, stop_watcher)
                     console.print(f"  [bold {C_MAGENTA}]Voice Mode Activated — Listening...[/]")
@@ -494,10 +509,10 @@ async def main():
                     console.print(f"  [bold {C_RED}]VAD not available: {e}[/]")
                     voice_mode = False
             else:
-                # Stop listener and watcher
                 stop_watcher.set()
                 if listener:
                     listener.stop()
+                globals()["_active_listener"] = None
                 if bridge_task and not bridge_task.done():
                     bridge_task.cancel()
                 console.print(f"  [bold {C_DIM}]Voice Mode Deactivated. Keyboard active.[/]")

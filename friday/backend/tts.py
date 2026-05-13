@@ -31,6 +31,7 @@ if not os.path.exists(KOKORO_MODEL_PATH) and os.path.exists("tts-1-hd"):
 _kokoro      = None
 _kokoro_disabled = False
 _pygame_init = False
+_last_audio_bytes: bytes = b""  # last TTS chunk played; used for echo detection
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -75,6 +76,8 @@ def play_interruptible(audio_bytes: bytes, stop_event: threading.Event,
     """
     if not audio_bytes or stop_event.is_set():
         return
+    global _last_audio_bytes
+    _last_audio_bytes = audio_bytes[:960]  # store reference frame for echo check
 
     tmp_path = None
     try:
@@ -193,6 +196,7 @@ async def synthesize_with_options(
     Emotion modifies speed, voice overrides default.
     """
     emotion_params = {
+        "neutral":     {"speed": 1.0},
         "happy":       {"speed": 1.15},
         "sad":         {"speed": 0.85},
         "professional": {"speed": 1.0},

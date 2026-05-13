@@ -17,12 +17,14 @@ import os
 import queue
 import tempfile
 import threading
+import time
 import wave
 import math
 
 import pyaudio
 import numpy as np
 from scipy import signal
+from scipy.fft import fft as _fft
 
 try:
     import webrtcvad
@@ -54,7 +56,6 @@ class MicrophoneHealthCheck:
     """Detect bad mics, USB glitches, and measure room noise floor."""
     @staticmethod
     def check_mic_levels(frames: list[bytes]) -> dict:
-        import numpy as np
         levels = []
         for frame in frames:
             audio = np.frombuffer(frame, dtype=np.int16).astype(np.float32) / 32768.0
@@ -76,9 +77,6 @@ class MicrophoneHealthCheck:
     @staticmethod
     def detect_echo(speaker_output: bytes, mic_input: bytes) -> float:
         """Cross-correlation to detect echo (requires shared memory buffer sync)"""
-        import numpy as np
-        from scipy import signal
-        
         speaker = np.frombuffer(speaker_output, dtype=np.int16).astype(np.float32)
         mic = np.frombuffer(mic_input, dtype=np.int16).astype(np.float32)
         
@@ -100,59 +98,47 @@ class SpeakerDiarization:
     """Identify if user or others speaking using basic FFT profiling."""
     
     def __init__(self):
-        self.baseline_voice_profile = None  # Learn user's voice
+        self.baseline_voice_profile = None
+        self._baseline_samples: list[dict] = []  # accumulate N samples before locking
+        self._BASELINE_COUNT = 3
     
     def learn_speaker(self, audio: bytes):
-        """Fingerprint speaker voice (assumes first speaker is user)"""
-        import numpy as np
-        from scipy.fft import fft
-        
+        """Fingerprint speaker voice — averages 3 samples for a robust baseline."""
         arr = np.frombuffer(audio, dtype=np.int16).astype(np.float32)
-        fft_result = np.abs(fft(arr))
-        # Protect against empty arrays or zero sum
+        fft_result = np.abs(_fft(arr))
         if len(fft_result) == 0 or np.sum(fft_result) == 0:
             return
-            
-        centroid = np.average(
-            np.arange(len(fft_result)),
-            weights=fft_result
-        )
-        
-        if self.baseline_voice_profile is None:
+        centroid = np.average(np.arange(len(fft_result)), weights=fft_result)
+        self._baseline_samples.append({
+            "centroid": float(centroid),
+            "energy":   float(np.sqrt(np.mean(arr ** 2)))
+        })
+        remaining = self._BASELINE_COUNT - len(self._baseline_samples)
+        if remaining > 0:
+            print(f"[VAD] Building voice profile... ({len(self._baseline_samples)}/{self._BASELINE_COUNT})")
+        if len(self._baseline_samples) >= self._BASELINE_COUNT and self.baseline_voice_profile is None:
             self.baseline_voice_profile = {
-                "centroid": centroid,
-                "energy": np.sqrt(np.mean(arr ** 2))
+                "centroid": float(np.mean([s["centroid"] for s in self._baseline_samples])),
+                "energy":   float(np.mean([s["energy"]   for s in self._baseline_samples]))
             }
-            print("[VAD] Baseline voice profile locked.")
+            print("[VAD] Baseline voice profile locked (3-sample average).")
     
     def identify_speaker(self, audio: bytes) -> dict:
         """Check if voice matches known user"""
-        import numpy as np
-        from scipy.fft import fft
-        
         if not self.baseline_voice_profile:
             return {"speaker": "unknown", "confidence": 0.0}
-        
         arr = np.frombuffer(audio, dtype=np.int16).astype(np.float32)
-        fft_result = np.abs(fft(arr))
+        fft_result = np.abs(_fft(arr))
         if len(fft_result) == 0 or np.sum(fft_result) == 0:
             return {"speaker": "unknown", "confidence": 0.0}
-            
-        centroid = np.average(
-            np.arange(len(fft_result)),
-            weights=fft_result
-        )
+        centroid = np.average(np.arange(len(fft_result)), weights=fft_result)
         energy = np.sqrt(np.mean(arr ** 2))
-        
-        # Compare to baseline
         centroid_diff = abs(centroid - self.baseline_voice_profile["centroid"])
-        energy_diff = abs(energy - self.baseline_voice_profile["energy"])
-        
+        energy_diff   = abs(energy   - self.baseline_voice_profile["energy"])
         confidence = 1.0 - min(1.0, centroid_diff / 1000 + energy_diff / 100)
-        
         return {
             "speaker": "user" if confidence > 0.7 else "other",
-            "confidence": confidence
+            "confidence": float(confidence)
         }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -181,11 +167,12 @@ class ContinuousListener:
         self._thread: threading.Thread | None = None
         self.active     = False
         self._filter_state = signal.sosfilt_zi(SOS_FILTER)
-        self.dynamic_threshold = 0.005  # initial default, updated after calibration
+        self.dynamic_threshold = 0.005
         self.diarization = SpeakerDiarization()
-        self.latest_frame = b""
-        # Set the MOMENT speech is detected (before transcription).
-        # Watchers can interrupt TTS playback immediately.
+        self.latest_frame      = b""
+        self.tts_reference_frame = b""   # set by cli when TTS plays, for echo check
+        self._utterance_count  = 0
+        self._last_transcription_ms = 0.0
         self.speech_started = threading.Event()
 
     # ── Public ────────────────────────────────────────────────────────────────
@@ -215,10 +202,13 @@ class ContinuousListener:
         # Convert bytes → float32 array
         audio = np.frombuffer(frame, dtype=np.int16).astype(np.float32) / 32768.0
         
-        # 1. Noise gate - mute very quiet frames (reduces background hum)
+        # 1. Noise gate — mute very quiet frames but advance filter state to
+        #    prevent discontinuity "pop" artifacts when speech resumes.
         rms = np.sqrt(np.mean(audio ** 2))
-        if rms < self.dynamic_threshold:  # threshold - tune per environment
-            return np.zeros_like(audio).astype(np.int16).tobytes()
+        if rms < self.dynamic_threshold:
+            zeros = np.zeros_like(audio)
+            _, self._filter_state = signal.sosfilt(SOS_FILTER, zeros, zi=self._filter_state)
+            return zeros.astype(np.int16).tobytes()
         
         # 2. High-pass filter (removes room noise, rumble)
         audio, self._filter_state = signal.sosfilt(SOS_FILTER, audio, zi=self._filter_state)
@@ -311,23 +301,43 @@ class ContinuousListener:
                             end_ring.clear()
                             start_ring.clear()
                             if len(audio) // FRAME_BYTES >= MIN_SPEECH_FRAMES:
-                                # Speaker Diarization
-                                if not self.diarization.baseline_voice_profile:
+                                # ── Echo detection ──────────────────────────
+                                if self.tts_reference_frame:
+                                    ref_len = len(self.tts_reference_frame)
+                                    echo_score = MicrophoneHealthCheck.detect_echo(
+                                        self.tts_reference_frame, audio[:ref_len]
+                                    )
+                                    if echo_score > 0.75:
+                                        print(f"[VAD] Echo detected ({echo_score:.2f}) — skipping.")
+                                        self.speech_started.clear()
+                                        continue
+                                # ── Speaker Diarization ─────────────────────
+                                still_building = (
+                                    len(self.diarization._baseline_samples)
+                                    < self.diarization._BASELINE_COUNT
+                                )
+                                if still_building:
                                     self.diarization.learn_speaker(audio)
                                     speaker = "user"
                                 else:
                                     res = self.diarization.identify_speaker(audio)
                                     speaker = res["speaker"]
-                                
+                                    if speaker == "other":
+                                        print(f"[VAD] Unknown speaker (conf={res['confidence']:.2f})")
+                                # ── Transcription + perf ─────────────────────
+                                _t0 = time.perf_counter()
                                 txt = self._transcribe(audio)
-                                # Clear after transcription — watcher can now reset
+                                self._last_transcription_ms = (time.perf_counter() - _t0) * 1000
+                                self._utterance_count += 1
+                                if self._utterance_count % 5 == 0:
+                                    print(f"[PERF] #{self._utterance_count} | STT: {self._last_transcription_ms:.0f}ms")
                                 self.speech_started.clear()
                                 if txt and len(txt.strip()) > 1:
                                     if speaker == "other":
                                         txt = f"[Unknown Speaker] {txt}"
                                     self._q.put(txt.strip())
                             else:
-                                self.speech_started.clear()  # too short — ignore
+                                self.speech_started.clear()
 
         finally:
             stream.stop_stream()
@@ -353,22 +363,25 @@ class ContinuousListener:
             model = self._load_whisper()
             segs, _ = model.transcribe(
                 tmp,
-                language="en",          # force English — faster, more accurate
+                language="en",
                 beam_size=5,
-                initial_prompt=PROMPT,  # primes vocabulary context
-                vad_filter=True,        # Whisper's own VAD as second pass
+                initial_prompt=PROMPT,
+                vad_filter=True,
                 vad_parameters=dict(min_silence_duration_ms=500),
             )
             segs = list(segs)
             if not segs:
                 return ""
-                
-            # Confidence scoring
+            # ── Hybrid confidence scoring ────────────────────────────────────
+            # Combines log-prob (accuracy) with compression_ratio (hallucination).
+            # High compression ratio (>2.4) means Whisper is repeating itself.
             avg_prob = sum(math.exp(s.avg_logprob) for s in segs) / len(segs)
-            if avg_prob < 0.6:
-                print(f"[VAD] Dropped low-confidence transcription ({avg_prob:.2f})")
+            avg_cr   = sum(s.compression_ratio    for s in segs) / len(segs)
+            cr_penalty = max(0.0, (avg_cr - 1.8) / 2.0)   # ramps up past cr=1.8
+            hybrid_score = avg_prob * (1.0 - min(0.5, cr_penalty))
+            if hybrid_score < 0.5:
+                print(f"[VAD] Dropped (conf={avg_prob:.2f} cr={avg_cr:.2f} score={hybrid_score:.2f})")
                 return ""
-                
             return " ".join(s.text for s in segs).strip()
         except Exception:
             return ""
