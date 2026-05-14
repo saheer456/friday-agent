@@ -11,7 +11,7 @@
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/styles.css?v=2.4" />
 </head>
 <body>
   <div class="bg-grid" aria-hidden="true"></div>
@@ -24,7 +24,10 @@
           <div class="logo-core"></div>
         </div>
         <div class="titles">
-          <h1>F.R.I.D.A.Y</h1>
+          <div class="title-row">
+            <h1>F.R.I.D.A.Y</h1>
+            <span class="version-pill" id="versionTag">v2.0 Sentinel</span>
+          </div>
           <p class="tagline">Full Responsive Interface · Networked Assistant for You</p>
         </div>
         <div class="header-actions">
@@ -42,11 +45,14 @@
               <p class="welcome-sub anim-fade" style="animation-delay: 200ms">Ask anything — watch the neural trace while tokens stream.</p>
             </div>
           </div>
-          <div class="thinking" id="thinking" hidden>
-            <div class="thinking-bars">
-              <span></span><span></span><span></span>
+          <div class="speaking-indicator" id="speakingIndicator" hidden>
+            <div class="jarvis-reactor">
+              <div class="reactor-ring reactor-ring-3"></div>
+              <div class="reactor-ring reactor-ring-2"></div>
+              <div class="reactor-ring reactor-ring-1"></div>
+              <div class="reactor-core"></div>
             </div>
-            <span id="thinkingLabel">Processing</span>
+            <span class="speaking-label">F.R.I.D.A.Y ONLINE</span>
           </div>
         </div>
 
@@ -75,6 +81,22 @@
         <h2>Neural telemetry</h2>
       </div>
 
+      <section class="stack-card status-card" aria-labelledby="status-h">
+        <h3 id="status-h">System status</h3>
+        <div class="status-row" id="statusMemory">
+          <span class="status-badge loading" id="badgeMemory">Loading</span>
+          <span class="status-label">Memory (MiniLM)</span>
+        </div>
+        <div class="status-row" id="statusTts">
+          <span class="status-badge loading" id="badgeTts">Loading</span>
+          <span class="status-label">TTS Engine</span>
+        </div>
+        <div class="status-row" id="statusStt">
+          <span class="status-badge active" id="badgeStt">Active</span>
+          <span class="status-label">STT (Whisper)</span>
+        </div>
+      </section>
+
       <section class="stack-card" aria-labelledby="voice-h">
         <h3 id="voice-h">Voice stack</h3>
         <dl class="spec-grid" id="voiceStack">
@@ -99,6 +121,6 @@
     </aside>
   </div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=2.4"></script>
 </body>
 </html>

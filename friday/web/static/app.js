@@ -4,13 +4,16 @@ const input = document.getElementById("input");
 const btnSend = document.getElementById("btnSend");
 const btnClear = document.getElementById("btnClear");
 const btnVoice = document.getElementById("btnVoice");
-const thinking = document.getElementById("thinking");
-const thinkingLabel = document.getElementById("thinkingLabel");
+const speakingIndicator = document.getElementById("speakingIndicator");
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
 const voiceStack = document.getElementById("voiceStack");
 const llmStack = document.getElementById("llmStack");
 const phaseFeed = document.getElementById("phaseFeed");
+const versionTag = document.getElementById("versionTag");
+const badgeMemory = document.getElementById("badgeMemory");
+const badgeTts    = document.getElementById("badgeTts");
+const badgeStt    = document.getElementById("badgeStt");
 
 if (window.marked && window.hljs) {
   marked.use({
@@ -45,6 +48,7 @@ let _currentAudio = null;
 let _audioQueue    = [];
 let _isPlaying     = false;
 let _ttsSentBuf    = '';   // accumulates tokens until a sentence boundary
+let _speakAbort    = null; // AbortController for the current /api/speak fetch
 
 function _cleanForSpeech(raw) {
   let t = raw;
@@ -128,10 +132,12 @@ function _playNextAudio() {
     URL.revokeObjectURL(url);
     _currentAudio = null;
     _isPlaying = false;
+    setSpeaking(false);
     _playNextAudio();
   };
   audio.onended = done;
   audio.onerror = () => { done(); _fallbackSpeak(fallback); };
+  setSpeaking(true);
   audio.play().catch(() => { done(); _fallbackSpeak(fallback); });
 }
 
@@ -155,11 +161,14 @@ async function _queueTTS(sentence) {
 }
 
 function _stopAllAudio() {
+  // Abort any in-flight /api/speak request so its response is never played
+  if (_speakAbort) { _speakAbort.abort(); _speakAbort = null; }
   if (_currentAudio) { _currentAudio.pause(); _currentAudio = null; }
   _audioQueue.forEach(({ url }) => URL.revokeObjectURL(url));
   _audioQueue = [];
   _isPlaying  = false;
   _ttsSentBuf = '';
+  setSpeaking(false);
   if (window.speechSynthesis) window.speechSynthesis.cancel();
 }
 
@@ -260,16 +269,83 @@ function addMessage(role, text) {
   wrap.append(label, body);
   chat.appendChild(wrap);
   scrollToBottom();
-  return body;
+  return { wrap, body };
+}
+
+function createStreamAnimator(messageWrap, bodyEl) {
+  let targetText = "";
+  let visibleCount = 0;
+  let timer = null;
+  let finished = false;
+
+  const render = (showCursor = true) => {
+    bodyEl.textContent = targetText.slice(0, visibleCount);
+    if (showCursor) {
+      const cursor = document.createElement("span");
+      cursor.className = "jarvis-cursor";
+      cursor.textContent = " ";
+      bodyEl.appendChild(cursor);
+    }
+    scrollToBottom();
+  };
+
+  const stop = () => {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+  };
+
+  messageWrap.classList.add("jarvis-streaming");
+  render(true);
+
+  timer = setInterval(() => {
+    if (finished) return;
+    const remaining = targetText.length - visibleCount;
+    if (remaining <= 0) return;
+    const step = remaining > 180 ? 10 : remaining > 90 ? 6 : remaining > 35 ? 3 : 1;
+    visibleCount = Math.min(targetText.length, visibleCount + step);
+    render(true);
+  }, 24);
+
+  return {
+    push(chunk) {
+      if (finished || !chunk) return;
+      targetText += chunk;
+    },
+    finalize(fullText) {
+      finished = true;
+      stop();
+      messageWrap.classList.remove("jarvis-streaming");
+      messageWrap.classList.add("jarvis-stabilized");
+      if (window.marked) {
+        bodyEl.innerHTML = safeParse(fullText);
+      } else {
+        bodyEl.textContent = fullText;
+      }
+      scrollToBottom();
+      setTimeout(() => messageWrap.classList.remove("jarvis-stabilized"), 500);
+    },
+    fail(message) {
+      finished = true;
+      stop();
+      messageWrap.classList.remove("jarvis-streaming");
+      messageWrap.classList.remove("jarvis-stabilized");
+      bodyEl.textContent = message;
+      scrollToBottom();
+    },
+  };
 }
 
 function setBusy(busy, label = busy ? "Neural pipeline…" : "Online") {
   btnSend.disabled = busy;
   btnSend.classList.toggle("sending", busy);
-  thinking.hidden = !busy;
-  thinkingLabel.textContent = busy ? "Backend active" : "Processing";
   statusDot.classList.toggle("busy", busy);
   statusText.textContent = label;
+}
+
+function setSpeaking(speaking) {
+  if (speakingIndicator) speakingIndicator.hidden = !speaking;
 }
 
 function clearPhaseFeed() {
@@ -306,11 +382,29 @@ function renderSpecGrid(dl, rows) {
   }
 }
 
+function _setBadge(el, ready) {
+  if (!el) return;
+  el.className = `status-badge ${ready ? "active" : "loading"}`;
+  el.textContent = ready ? "Active" : "Loading";
+}
+
 async function loadSystem() {
   try {
     const r = await fetch("/api/system");
     if (!r.ok) throw new Error("system");
     const d = await r.json();
+
+    // Version pill
+    const ui = d.ui || {};
+    if (versionTag) versionTag.textContent = ui.version || "v2.0 Sentinel";
+
+    // Readiness badges
+    const rd = d.readiness || {};
+    _setBadge(badgeMemory, rd.memory_ready);
+    _setBadge(badgeTts,    rd.tts_ready);
+    _setBadge(badgeStt,    rd.stt_ready ?? true);
+
+    // Voice stack spec grid
     const v = d.voice || {};
     renderSpecGrid(voiceStack, [
       ["STT", `${v.stt_model || "?"} · ${v.stt_compute || ""}`.trim()],
@@ -319,6 +413,8 @@ async function loadSystem() {
       ["Voice", v.tts_voice || "—"],
       ["VAD", `mode ${v.vad_mode ?? "2"}`],
     ]);
+
+    // LLM stack spec grid
     const L = d.llm || {};
     renderSpecGrid(llmStack, [
       ["Provider", L.llm_provider || "—"],
@@ -327,6 +423,7 @@ async function loadSystem() {
       ["Turns", String(d.history_turns ?? 0)],
     ]);
   } catch {
+    if (versionTag) versionTag.textContent = "v2.0 Sentinel";
     voiceStack.innerHTML = "<p class='ph-detail'>Could not load stack info.</p>";
   }
 }
@@ -369,10 +466,11 @@ form.addEventListener("submit", async (e) => {
 
   _stopAllAudio();   // cancel any audio from the previous response
 
-  const aiBody = addMessage("ai", "");
+  const aiMessage = addMessage("ai", "");
+  const aiBody = aiMessage.body;
+  const streamAnimator = createStreamAnimator(aiMessage.wrap, aiBody);
   clearPhaseFeed();
   setBusy(true);
-  thinkingLabel.textContent = "Neural trace";
 
   try {
     const res = await fetch("/api/chat/stream", {
@@ -399,7 +497,6 @@ form.addEventListener("submit", async (e) => {
       onToken: (chunk) => {
         if (!sawToken) {
           sawToken = true;
-          thinkingLabel.textContent = "Streaming";
           pushPhase({
             id: "stream",
             title: "Token stream",
@@ -407,16 +504,12 @@ form.addEventListener("submit", async (e) => {
           });
         }
         full += chunk;
-        if (window.marked) {
-          aiBody.innerHTML = safeParse(full);
-        } else {
-          aiBody.textContent = full;
-        }
-        scrollToBottom();
+        streamAnimator.push(chunk);
       },
     });
 
     if (full.trim()) {
+      streamAnimator.finalize(full);
       pushPhase({
         id: "commit",
         title: "Lattice sealed",
@@ -424,32 +517,42 @@ form.addEventListener("submit", async (e) => {
       });
 
       // Use LLM-powered prose conversion for high-quality speech.
-      // /api/speak rewrites the full Markdown into natural spoken English
-      // before synthesizing — far better than regex for structured content.
+      // AbortController ensures only one speak request is ever active —
+      // if the user sends a new message, _stopAllAudio() aborts this fetch
+      // before the response arrives, preventing double-audio playback.
       (async () => {
+        const ctrl = new AbortController();
+        _speakAbort = ctrl;          // register so _stopAllAudio() can cancel it
         try {
           const r = await fetch("/api/speak", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ text: full }),
+            signal: ctrl.signal,     // tied to the abort controller
           });
           if (!r.ok) throw new Error(`speak ${r.status}`);
           const blob = await r.blob();
-          const url  = URL.createObjectURL(blob);
+          // Only play if this request wasn't aborted by a newer message
+          if (ctrl.signal.aborted) return;
+          const url   = URL.createObjectURL(blob);
           const audio = new Audio(url);
           _currentAudio = audio;
+          _speakAbort   = null;      // fetch done, clear controller
           audio.play();
-          audio.onended = () => { URL.revokeObjectURL(url); _currentAudio = null; };
-          audio.onerror = () => { URL.revokeObjectURL(url); _currentAudio = null; };
-        } catch {
-          // Fallback: flush accumulated sentence buffer
-          _flushSentences(true);
+          setSpeaking(true);
+          audio.onended = () => { URL.revokeObjectURL(url); _currentAudio = null; setSpeaking(false); };
+          audio.onerror = () => { URL.revokeObjectURL(url); _currentAudio = null; setSpeaking(false); };
+        } catch (err) {
+          if (err.name === "AbortError") return;  // intentionally cancelled — silent
+          _flushSentences(true);                  // network/TTS error — use fallback
         }
       })();
+    } else {
+      streamAnimator.finalize(full);
     }
   } catch (err) {
     _stopAllAudio();
-    aiBody.textContent = `[Error: ${err.message || err}]`;
+    streamAnimator.fail(`[Error: ${err.message || err}]`);
     pushPhase({
       id: "fault",
       title: "Subsystem fault",

@@ -48,6 +48,23 @@ def _llm_stack_info() -> dict:
     }
 
 
+def _readiness_info() -> dict:
+    """Live readiness flags — used by the frontend status badges."""
+    from backend import memory as _mem
+    return {
+        "memory_ready": _mem._memory_ready.is_set(),
+        "tts_ready": _tts_ready,
+        "stt_ready": _stt_ready,
+    }
+
+
+def _ui_info() -> dict:
+    version = (os.getenv("FRIDAY_UI_VERSION") or "v2.0 Sentinel").strip()
+    if not version:
+        version = "v2.0 Sentinel"
+    return {"version": version}
+
+
 app = FastAPI(title="FRIDAY Web", version="1.0")
 
 STATIC_DIR = ROOT / "web" / "static"
@@ -62,40 +79,55 @@ app.add_middleware(
 )
 
 
-# ── Startup warmup — pre-load slow models so first chat is instant ─────────────
+# ── Readiness flags (set during warmup, read by /api/system) ──────────────────
+_tts_ready = False
+_stt_ready = True   # STT is Whisper — loaded on demand; mark ready by default
+
+# ── Startup warmup — block until slow models are ready ────────────────────────
 @app.on_event("startup")
 async def _warmup():
     import asyncio, threading
 
-    def _load_memory():
-        try:
-            from backend.memory import _get_memory
-            _get_memory()          # loads HuggingFace model + opens Chroma store
-            print("[FRIDAY] ✓ Memory warmed up")
-        except Exception as e:
-            print(f"[FRIDAY] Memory warmup skipped: {e}")
+    # ── Memory: BLOCKING await — server won't accept requests until the
+    # HuggingFace embedding model + ChromaDB are fully loaded.
+    # This is the simplest and most reliable fix for the second-message crash:
+    # there is no race condition if the model is already ready before msg 1.
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _do_load_memory)
 
-    def _load_tts():
-        try:
-            from backend.tts import _synth_kokoro_sync, _get_kokoro
-            _get_kokoro()          # loads Kokoro ONNX if available
-            print("[FRIDAY] ✓ Kokoro TTS warmed up")
-        except Exception:
-            pass   # edge-tts needs no warmup (pure async HTTP)
-
-    # Both run in daemon threads — don't block startup or the event loop
-    threading.Thread(target=_load_memory, daemon=True, name="warmup-mem").start()
-    threading.Thread(target=_load_tts,    daemon=True, name="warmup-tts").start()
-
-    # Warm up edge-tts connection with a tiny silent request
-    async def _ping_edge_tts():
-        try:
-            from backend.tts import synthesize
-            await synthesize("Hi")
-            print("[FRIDAY] ✓ Edge-TTS warmed up")
-        except Exception:
-            pass
+    # ── TTS: fire-and-forget — not required before first chat
+    threading.Thread(target=_load_tts, daemon=True, name="warmup-tts").start()
     asyncio.create_task(_ping_edge_tts())
+
+
+def _do_load_memory():
+    try:
+        from backend.memory import warm_up
+        warm_up()   # loads HF model + ChromaDB, sets _memory_ready event
+    except Exception as e:
+        print(f"[FRIDAY] Memory warmup skipped: {e}")
+
+
+def _load_tts():
+    global _tts_ready
+    try:
+        from backend.tts import _get_kokoro
+        _get_kokoro()
+        _tts_ready = True
+        print("[FRIDAY] ✓ Kokoro TTS warmed up")
+    except Exception:
+        pass
+
+
+async def _ping_edge_tts():
+    global _tts_ready
+    try:
+        from backend.tts import synthesize
+        await synthesize("Hi")
+        _tts_ready = True
+        print("[FRIDAY] ✓ Edge-TTS warmed up")
+    except Exception:
+        pass
 
 
 class ChatBody(BaseModel):
@@ -117,8 +149,10 @@ async def health():
 async def system_info():
     """Voice stack + LLM routing (HUD)."""
     return {
+        "ui": _ui_info(),
         "voice": _voice_stack_info(),
         "llm": _llm_stack_info(),
+        "readiness": _readiness_info(),
         "history_turns": len(brain.conversation_history),
     }
 

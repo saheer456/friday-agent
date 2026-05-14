@@ -15,11 +15,21 @@ import re
 import os
 from pathlib import Path
 from . import rag, search, scraper, memory as mem, tools
+from . import tool_bridge   # Skills framework — registers Code + Terminal skills at import
+
+_http_client = None
+
+def _get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None:
+        limits = httpx.Limits(max_keepalive_connections=10, max_connections=20)
+        _http_client = httpx.AsyncClient(limits=limits)
+    return _http_client
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
-DEFAULT_OPENROUTER_MODEL = "ring-2.6-1t:free"
+DEFAULT_OPENROUTER_MODEL = "google/gemini-2.0-flash-lite-preview-02-05:free"
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 
@@ -47,6 +57,34 @@ def _chat_stream_config() -> tuple[str, str, str, str]:
     return GROQ_URL, key, model, "Groq"
 
 
+def _is_key_usable(key: str) -> bool:
+    key = (key or "").strip()
+    return bool(key) and "your_" not in key.lower()
+
+
+def _fallback_stream_configs() -> list[tuple[str, str, str, str]]:
+    """
+    Preferred provider first, then the alternate provider if configured.
+    This lets FRIDAY survive transient provider/network faults.
+    """
+    primary = _llm_provider()
+    order = [primary, "openrouter" if primary == "groq" else "groq"]
+    configs: list[tuple[str, str, str, str]] = []
+
+    for provider in order:
+        if provider == "openrouter":
+            key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
+            model = (os.getenv("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL).strip()
+            if _is_key_usable(key):
+                configs.append((OPENROUTER_URL, key, model, "OpenRouter"))
+        else:
+            key = (os.getenv("GROQ_API_KEY") or "").strip()
+            model = (os.getenv("GROQ_MODEL") or DEFAULT_GROQ_MODEL).strip()
+            if _is_key_usable(key):
+                configs.append((GROQ_URL, key, model, "Groq"))
+    return configs
+
+
 def _openrouter_headers(base: dict) -> dict:
     h = dict(base)
     h["HTTP-Referer"] = (os.getenv("OPENROUTER_HTTP_REFERER") or "http://localhost").strip()
@@ -70,9 +108,9 @@ def _load_profile() -> str:
 
 # Profile is loaded lazily inside stream_response
 
-# Conversation history — capped at 10 messages (5 turns) to save tokens
+# Conversation history — capped at 6 messages (3 turns) to save tokens
 conversation_history: list[dict] = []
-MAX_HISTORY = 10
+MAX_HISTORY = 6
 
 
 def _trim_history():
@@ -181,59 +219,7 @@ async def route_query(user_message: str) -> str:
             d = await tools.ingest_url(urls[0])
             return f"Done. Ingested {d.get('words',0)} words from {urls[0]}."
 
-    # #12 Calendar
-    if any(k in msg for k in ["calendar", "add event", "schedule", "remind me at", "remind me on", "class at"]):
-        print("Brain: → Calendar")
-        api_key = os.getenv("GROQ_API_KEY", "")
-        if api_key:
-            from datetime import datetime
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            prompt = f"The user wants to add a calendar event based on: '{user_message}'. The current time is {now}. Extract the title and start time. Return ONLY a JSON object with keys 'title', 'start_time' (format YYYY-MM-DD HH:MM:SS), 'duration_minutes' (integer, default 60), and 'location' (string). No markdown, no other text."
-            payload = {
-                "model": "llama-3.1-8b-instant",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 150,
-                "temperature": 0.1,
-                "response_format": {"type": "json_object"}
-            }
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as c:
-                    r = await c.post("https://api.groq.com/openai/v1/chat/completions",
-                                     headers={"Authorization": f"Bearer {api_key}"}, json=payload)
-                    r.raise_for_status()
-                    data = json.loads(r.json()["choices"][0]["message"]["content"])
-                    res = tools.add_calendar_event(data.get("title", "Event"), data.get("start_time"), data.get("duration_minutes", 60), data.get("location", ""))
-                    if res.get("status") == "success":
-                        return f"Action complete: I generated a calendar event for '{data.get('title')}' at {data.get('start_time')} and opened it in your calendar app for you to save."
-                    return f"Failed to open calendar: {res.get('error')}"
-            except Exception as e:
-                pass # Fallback to normal chat if extraction fails
 
-    # #13 Email
-    if any(k in msg for k in ["email", "send an email", "mail to"]):
-        print("Brain: → Email")
-        api_key = os.getenv("GROQ_API_KEY", "")
-        if api_key:
-            prompt = f"The user wants to send an email based on: '{user_message}'. Extract the recipient, subject, and body. Return ONLY a JSON object with keys 'to', 'subject', and 'body'. No markdown, no other text."
-            payload = {
-                "model": "llama-3.1-8b-instant",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 200,
-                "temperature": 0.1,
-                "response_format": {"type": "json_object"}
-            }
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as c:
-                    r = await c.post("https://api.groq.com/openai/v1/chat/completions",
-                                     headers={"Authorization": f"Bearer {api_key}"}, json=payload)
-                    r.raise_for_status()
-                    data = json.loads(r.json()["choices"][0]["message"]["content"])
-                    res = tools.send_email(data.get("to", ""), data.get("subject", ""), data.get("body", ""))
-                    if res.get("status") == "success":
-                        return f"Action complete: I opened an email draft addressed to {data.get('to')} with the subject and body pre-filled. You just need to click send."
-                    return f"Failed to open email client: {res.get('error')}"
-            except Exception as e:
-                pass # Fallback to normal chat if extraction fails
 
     # RAG personal data
     if any(k in msg for k in ["my files", "my document", "my data", "what did i write",
@@ -247,8 +233,8 @@ async def route_query(user_message: str) -> str:
         query = re.sub(r"(search for|search|look up|find me)", "", user_message, flags=re.I).strip()
         return f"Web search results:\n{await search.web_search(query)}"
 
+    # Native Tool Calling replaces the old _skill_router
     return ""
-
 
 async def _http_stream_error_snippet(resp: httpx.Response) -> str:
     """Streaming responses must be read before .text / .json (httpx 0.28+)."""
@@ -259,18 +245,17 @@ async def _http_stream_error_snippet(resp: httpx.Response) -> str:
     except Exception as ex:
         return f"(could not read body: {ex})"
 
-
 async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool):
     """
-    Core chat turn. Yields:
+    Core chat turn with native tool calling loop. Yields:
       ("phase", dict) — optional UI telemetry
       ("text", str)   — model token / fragment
       ("error", str)  — fatal error message (caller should stop)
     """
-    url, api_key, model, provider = _chat_stream_config()
-
-    if not api_key or "your_" in api_key.lower():
-        yield ("error", f"[Error: API key missing for {provider} — set OPENROUTER_API_KEY or GROQ_API_KEY in .env]")
+    stream_configs = _fallback_stream_configs()
+    if not stream_configs:
+        preferred = "OpenRouter" if _llm_provider() == "openrouter" else "Groq"
+        yield ("error", f"[Error: API key missing for {preferred} — set OPENROUTER_API_KEY or GROQ_API_KEY in .env]")
         return
 
     if emit_phases:
@@ -283,36 +268,26 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
             },
         )
 
-    tool_context = await route_query(user_message)
-
-    if emit_phases:
-        if tool_context.strip():
-            yield (
-                "phase",
-                {
-                    "id": "routing",
-                    "title": "Auxiliary routing matrix",
-                    "detail": "Engaging tool fabric · weaving contextual subroutines",
-                },
-            )
-        else:
-            yield (
-                "phase",
-                {
-                    "id": "routing",
-                    "title": "Direct reasoning path",
-                    "detail": "Bypassing heavy subsystems · low-latency uplink primed",
-                },
-            )
+    try:
+        tool_context = await route_query(user_message)
+    except Exception as e:
+        print(f"[Brain] route_query error: {e}")
+        tool_context = ""
 
     recalled = ""
     if not _is_smalltalk(user_message):
-        # Run in executor — _get_memory() loads HuggingFace model on first call
-        # and would block the entire event loop (and stall SSE flushing) if called directly.
         loop = asyncio.get_event_loop()
-        recalled = await loop.run_in_executor(
-            None, mem.recall_memory, user_message, 3
-        ) or ""
+        try:
+            recalled = await asyncio.wait_for(
+                loop.run_in_executor(None, mem.recall_memory, user_message, 3),
+                timeout=4.0,
+            ) or ""
+        except asyncio.TimeoutError:
+            print("[Brain] recall_memory timed out")
+            recalled = ""
+        except Exception as e:
+            print(f"[Brain] recall_memory error: {e}")
+            recalled = ""
         if recalled:
             tool_context = f"LONG-TERM MEMORIES (about sir):\n{recalled}\n\n{tool_context}".strip()
             if emit_phases:
@@ -332,7 +307,8 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
         "Always address the user as 'sir'. "
         "You are casual, supportive, occasionally funny, but always sharp and helpful. "
         "You speak naturally like a close friend who happens to be incredibly intelligent. "
-        "No corporate stiffness — be real, be warm, be concise. Never break character."
+        "No corporate stiffness — be real, be warm, be concise. Never break character.\n"
+        "CRITICAL: DO NOT output any internal monologue, thought process, or reasoning. Output ONLY your final response directly to the user."
     )
     _profile = _load_profile()
     if _profile:
@@ -350,7 +326,7 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
             "\n\nOUTPUT CHANNEL: WEB CHAT with real-time voice readback. "
             "Format your response with Markdown for display, but structure it so it also sounds natural when spoken. "
             "RULES:\n"
-            "- Write bullet points as COMPLETE sentences with a subject and verb (e.g. 'Clustering groups similar data points together.')\n"
+            "- Write bullet points as COMPLETE sentences with a subject and verb\n"
             "- NEVER use the '**Term**: description' anti-pattern — instead write '**Term** is/does/means description.'\n"
             "- Use `## headers` only for multi-section responses, not for single-topic answers\n"
             "- Use numbered lists only for strict step-by-step sequences\n"
@@ -372,66 +348,140 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
             },
         )
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    if provider == "OpenRouter":
-        headers = _openrouter_headers(headers)
+    max_tool_rounds = 4
+    for round_num in range(max_tool_rounds):
+        tools_payload = tool_bridge.get_tools_payload()
+        
+        full_response = ""
+        last_error = ""
+        tool_calls_accumulator = {}
 
-    payload = {
-        "model": model,
-        "messages": messages,
-        "stream": True,
-        "max_tokens": 400 if voice_mode else 600,
-        "temperature": 0.7,
-    }
+        total_attempts = len(stream_configs)
+        for attempt_index, (url, api_key, model, provider) in enumerate(stream_configs, start=1):
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+            if provider == "OpenRouter":
+                headers = _openrouter_headers(headers)
 
-    if emit_phases:
-        yield (
-            "phase",
-            {
-                "id": "uplink",
-                "title": "Quantum uplink",
-                "detail": f"{provider} · {model} · establishing token stream",
-            },
-        )
+            payload = {
+                "model": model,
+                "messages": messages,
+                "stream": True,
+                "max_tokens": 400 if voice_mode else 800,
+                "temperature": 0.7,
+            }
+            if tools_payload:
+                payload["tools"] = tools_payload
 
-    full_response = ""
-    timeout = 120.0 if provider == "OpenRouter" else 30.0
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            async with client.stream("POST", url, headers=headers, json=payload) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if not line or not line.startswith("data: "):
-                        continue
-                    raw = line[6:]
-                    if raw.strip() == "[DONE]":
-                        break
-                    try:
-                        obj = json.loads(raw)
-                        delta = (obj.get("choices") or [{}])[0].get("delta") or {}
-                        chunk = delta.get("content") or delta.get("reasoning") or ""
-                        if chunk:
-                            full_response += chunk
-                            yield ("text", chunk)
-                    except (json.JSONDecodeError, KeyError, IndexError, TypeError):
-                        continue
-    except httpx.HTTPStatusError as e:
-        detail = await _http_stream_error_snippet(e.response)
-        msg = f"[Error: {provider} API {e.response.status_code}: {detail}]"
-        full_response = msg
-        yield ("error", msg)
-    except Exception as e:
-        msg = f"[Error: {str(e)}]"
-        full_response = msg
-        yield ("error", msg)
+            if emit_phases and round_num == 0:
+                attempt_note = f" (attempt {attempt_index}/{total_attempts})" if total_attempts > 1 else ""
+                yield (
+                    "phase",
+                    {
+                        "id": "uplink",
+                        "title": "Quantum uplink",
+                        "detail": f"{provider} · {model}{attempt_note} · establishing token stream",
+                    },
+                )
 
-    if full_response and not full_response.startswith("[Error:"):
-        add_to_history("assistant", full_response)
-        if not _is_smalltalk(user_message):
-            mem.save_memory(user_message, full_response)
+            timeout = 120.0 if provider == "OpenRouter" else 30.0
+            try:
+                client = _get_http_client()
+                async with client.stream("POST", url, headers=headers, json=payload, timeout=timeout) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if not line or not line.startswith("data: "):
+                            continue
+                        raw = line[6:]
+                        if raw.strip() == "[DONE]":
+                            break
+                        try:
+                            obj = json.loads(raw)
+                            delta = (obj.get("choices") or [{}])[0].get("delta") or {}
+                            
+                            # Aggregate tool calls
+                            if "tool_calls" in delta:
+                                for tc in delta["tool_calls"]:
+                                    idx = tc["index"]
+                                    if idx not in tool_calls_accumulator:
+                                        tool_calls_accumulator[idx] = {
+                                            "id": tc.get("id", ""),
+                                            "type": "function",
+                                            "function": {"name": tc.get("function", {}).get("name", ""), "arguments": ""}
+                                        }
+                                    if tc.get("function") and "arguments" in tc["function"]:
+                                        tool_calls_accumulator[idx]["function"]["arguments"] += tc["function"]["arguments"]
+
+                            # Stream text chunk
+                            chunk = delta.get("content") or ""
+                            if chunk:
+                                full_response += chunk
+                                yield ("text", chunk)
+                        except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+                            continue
+
+                if full_response or tool_calls_accumulator:
+                    break
+                last_error = f"[Error: {provider} returned an empty response]"
+            except httpx.HTTPStatusError as e:
+                detail = await _http_stream_error_snippet(e.response)
+                last_error = f"[Error: {provider} API {e.response.status_code}: {detail}]"
+                if 400 <= e.response.status_code < 500 and e.response.status_code != 429:
+                    break
+            except httpx.RequestError as e:
+                last_error = f"[Error: {provider} network error: {e}]"
+            except Exception as e:
+                last_error = f"[Error: {provider} unexpected error: {e}]"
+
+        if last_error and not full_response and not tool_calls_accumulator:
+            yield ("error", last_error)
+            full_response = last_error
+            break
+
+        if tool_calls_accumulator:
+            tool_calls = list(tool_calls_accumulator.values())
+            assistant_msg = {
+                "role": "assistant", 
+                "content": full_response or None, 
+                "tool_calls": tool_calls
+            }
+            messages.append(assistant_msg)
+            
+            if emit_phases:
+                yield (
+                    "phase",
+                    {
+                        "id": "tool_execution",
+                        "title": "Executing Subroutines",
+                        "detail": f"Triggering {len(tool_calls)} external skill(s)...",
+                    },
+                )
+                
+            for tc in tool_calls:
+                tc_id = tc["id"]
+                fn_name = tc["function"]["name"]
+                fn_args = tc["function"]["arguments"]
+                
+                print(f"Brain: Native tool call → {fn_name}({fn_args})")
+                res_str = await tool_bridge.handle_tool_call_async(fn_name, fn_args)
+                
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "content": res_str,
+                })
+                
+            # Loop around to let the LLM see the tool output and respond
+            continue
+        else:
+            # We are done, normal response finished
+            if full_response and not full_response.startswith("[Error:"):
+                add_to_history("assistant", full_response)
+                if not _is_smalltalk(user_message):
+                    mem.save_memory(user_message, full_response)
+            break
 
 
 async def iter_chat_sse_events(user_message: str, voice_mode: bool = False):
