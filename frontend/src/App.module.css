@@ -1,0 +1,31 @@
+.layout {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+.mainCol {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg);
+}
+
+.composerWrap {
+  padding: 0 32px 24px;
+  background: var(--bg);
+}
+
+.footer {
+  text-align: center;
+  padding: 10px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  border-top: 1px solid var(--outline);
+  background: var(--bg1);
+}

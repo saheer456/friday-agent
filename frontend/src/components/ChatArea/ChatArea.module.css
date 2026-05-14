@@ -1,0 +1,199 @@
+.chatWrap {
+  flex-grow: 1;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.chatScroll {
+  flex-grow: 1;
+  overflow-y: auto;
+  padding: 32px 40px;
+  scroll-behavior: smooth;
+  transition: outline 0.2s ease;
+}
+
+/* ── Welcome ─── */
+.welcome {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 10px;
+}
+.welcomeLine {
+  font-family: var(--font-head);
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--text);
+  font-style: italic;
+}
+.welcomeSub {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  max-width: 320px;
+  line-height: 1.6;
+}
+
+/* ── Messages ─── */
+.msg {
+  max-width: 80%;
+  margin-bottom: 28px;
+  animation: msg-in 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.msgLabel {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  margin-bottom: 6px;
+  color: var(--text-muted);
+}
+
+.msgBody {
+  padding: 16px 20px;
+  border-radius: var(--radius);
+  line-height: 1.65;
+  font-size: 0.95rem;
+  word-wrap: break-word;
+  box-shadow: var(--shadow);
+}
+
+/* User */
+.user {
+  margin-left: auto;
+}
+.user .msgLabel {
+  text-align: right;
+  color: var(--primary);
+}
+.user .msgBody {
+  background: var(--primary-dim);
+  border: 1px solid var(--primary-border);
+  border-bottom-right-radius: 4px;
+  color: var(--text);
+}
+
+/* FRIDAY */
+.ai {
+  margin-right: auto;
+}
+.ai .msgLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--amber);
+}
+.ai .msgLabel::before {
+  content: "";
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--primary-dim);
+  border: 2px solid var(--primary-border);
+  flex-shrink: 0;
+}
+.ai .msgBody {
+  background: #fff;
+  border: 1px solid var(--outline);
+  border-bottom-left-radius: 4px;
+  color: var(--text);
+}
+
+/* Error message */
+.ai .msgBody:has(> span.errorMsg) {
+  background: rgba(239, 68, 68, 0.06);
+  border-color: rgba(239, 68, 68, 0.25);
+  color: #b91c1c;
+}
+
+/* Markdown content */
+.msgBody p { margin: 0 0 0.8em; }
+.msgBody p:last-child { margin-bottom: 0; }
+.msgBody h1, .msgBody h2, .msgBody h3 {
+  font-family: var(--font-head);
+  color: var(--text);
+  margin: 1em 0 0.4em;
+}
+.msgBody ul, .msgBody ol {
+  padding-left: 1.5em;
+  margin-bottom: 0.8em;
+}
+.msgBody li { margin-bottom: 0.3em; }
+.msgBody strong { color: var(--text); font-weight: 700; }
+.msgBody pre {
+  background: var(--bg2);
+  border: 1px solid var(--outline);
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  font-size: 0.85rem;
+  margin: 0.8em 0;
+}
+.msgBody code {
+  font-size: 0.85em;
+  background: var(--bg2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--amber);
+}
+.msgBody pre code {
+  background: transparent;
+  color: var(--text);
+  padding: 0;
+}
+
+/* Streaming cursor */
+.cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--primary);
+  vertical-align: text-bottom;
+  margin-left: 3px;
+  border-radius: 1px;
+  animation: blink 0.9s step-end infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ── Speaking indicator — large circle matching screenshot ─── */
+.speakingIndicator {
+  position: absolute;
+  bottom: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.speakingCircle {
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  border: 2px solid rgba(107, 112, 102, 0.25);
+  background: rgba(250, 246, 240, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: circle-pulse 2.5s ease-in-out infinite;
+  backdrop-filter: blur(4px);
+}
+.speakingCircleInner {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  background: rgba(107, 112, 102, 0.12);
+  animation: circle-pulse 2.5s ease-in-out infinite reverse;
+}
+@keyframes circle-pulse {
+  0%, 100% { transform: scale(0.95); opacity: 0.7; }
+  50%       { transform: scale(1.03); opacity: 1; }
+}

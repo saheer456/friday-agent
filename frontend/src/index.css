@@ -1,0 +1,79 @@
+/* ═══════════════════════════════════════════════════════════
+   Terra — Organic Design System  (DESIGN.md)
+   North Star: "Rooted Warmth"
+   ═══════════════════════════════════════════════════════════ */
+:root {
+  /* Palette */
+  --primary:     #4a7c59;  /* Forest green  — actions, nav, interactive */
+  --primary-dim: rgba(74, 124, 89, 0.18);
+  --primary-border: rgba(74, 124, 89, 0.3);
+  --bg:          #faf6f0;  /* Warm cream    — main background */
+  --bg1:         #f2ece3;  /* Slightly deeper cream for cards */
+  --bg2:         #ebe3d8;  /* Card hover / input bg */
+  --amber:       #705c30;  /* Warm amber    — highlights, badges */
+  --amber-dim:   rgba(112, 92, 48, 0.15);
+  --text:        #2e3230;  /* Deep warm charcoal */
+  --text-muted:  #6b7066;  /* Muted warm gray — always greenish undertone */
+  --outline:     rgba(46, 50, 48, 0.12);
+  --shadow:      0 4px 20px rgba(46, 50, 48, 0.06);
+  --shadow-md:   0 8px 32px rgba(46, 50, 48, 0.10);
+
+  /* Shape */
+  --radius:      12px;
+  --radius-sm:   8px;
+  --radius-pill: 100px;
+
+  /* Typography */
+  --font-head: "Literata", Georgia, serif;
+  --font-body: "Nunito Sans", system-ui, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.6;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  height: 100%;
+  display: flex;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+/* ── Organic background texture ─────────────────────────────── */
+.bg-texture {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background-image:
+    radial-gradient(ellipse 90% 60% at 20% 10%, rgba(74,124,89,0.06) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 80% at 80% 90%, rgba(112,92,48,0.05) 0%, transparent 60%);
+}
+
+/* Scrollbars — warm and subtle */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--outline); border-radius: var(--radius-pill); }
+::-webkit-scrollbar-thumb:hover { background: rgba(46,50,48,0.2); }

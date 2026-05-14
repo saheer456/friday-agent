@@ -1,0 +1,185 @@
+.telemetry {
+  width: 300px;
+  background: var(--bg1);
+  border-left: 1px solid var(--outline);
+  padding: 24px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+.telemetryHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 4px;
+}
+.telemetryHead h2 {
+  font-family: var(--font-head);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.telemetryDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 6px rgba(74,124,89,0.4);
+  animation: glow-pulse 2s ease-in-out infinite alternate;
+  flex-shrink: 0;
+}
+@keyframes glow-pulse {
+  from { opacity: 0.6; }
+  to   { opacity: 1; }
+}
+
+/* ── Cards ─── */
+.stackCard {
+  background: #fff;
+  border: 1px solid var(--outline);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: var(--shadow);
+}
+.stackCard h3 {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+/* ── Status Badges ─── */
+.statusRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.statusRow:last-child { margin-bottom: 0; }
+
+.statusBadge {
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+.statusBadge.active {
+  background: rgba(74,124,89,0.12);
+  color: var(--primary);
+  border: 1px solid var(--primary-border);
+}
+.statusBadge.loading {
+  background: var(--amber-dim);
+  color: var(--amber);
+  border: 1px solid rgba(112,92,48,0.25);
+  animation: pulse-busy 1.5s infinite alternate;
+}
+.statusLabel {
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+/* ── Spec Grid ─── */
+.specGrid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 16px;
+  margin: 0;
+  font-size: 0.8rem;
+}
+.specGrid dt {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.specGrid dd {
+  margin: 0;
+  color: var(--primary);
+  text-align: right;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.specSkel {
+  height: 64px;
+  background: linear-gradient(90deg, var(--bg2) 25%, var(--bg1) 50%, var(--bg2) 75%);
+  background-size: 200% 100%;
+  animation: skel 1.5s infinite;
+  border-radius: var(--radius-sm);
+}
+@keyframes skel {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Backend Trace ─── */
+.feedCard {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  background: #1e1e1e;
+  border-color: rgba(46,50,48,0.4);
+}
+.feedCard h3 {
+  color: #8fbc94;
+}
+.feedHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.feedPulse {
+  width: 6px;
+  height: 6px;
+  background: #4ade80;
+  border-radius: 50%;
+  animation: glow-pulse 1.5s infinite alternate;
+}
+
+.phaseFeed {
+  flex-grow: 1;
+  overflow-y: auto;
+  font-family: "Courier New", monospace;
+  font-size: 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.phaseLine {
+  background: rgba(255,255,255,0.04);
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  border-left: 2px solid #4a7c59;
+  animation: slide-in 0.2s ease-out;
+}
+@keyframes slide-in {
+  from { opacity: 0; transform: translateX(6px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.phId {
+  float: right;
+  font-size: 0.58rem;
+  color: #6b7066;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.phTitle {
+  color: #8fbc94;
+  margin-bottom: 3px;
+  font-weight: 600;
+}
+.phDetail {
+  color: #9ca3af;
+  word-break: break-word;
+}
