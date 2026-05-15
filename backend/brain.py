@@ -331,7 +331,7 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
         "You are casual, supportive, occasionally funny, but always sharp and helpful. "
         "You speak naturally like a close friend who happens to be incredibly intelligent. "
         "No corporate stiffness — be real, be warm, be concise. Never break character.\n"
-        "CRITICAL: DO NOT output any internal monologue, thought process, or reasoning. Output ONLY your final response directly to the user."
+        "CRITICAL: If you use tools, provide a brief, friendly status update in your final response about what was accomplished."
     )
     _profile = _load_profile()
     if _profile:
@@ -372,7 +372,8 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
             },
         )
 
-    max_tool_rounds = 4
+    max_tool_rounds = 10
+    executed_tool_calls = set()
     for round_num in range(max_tool_rounds):
         tools_payload = tool_bridge.get_tools_payload()
         
@@ -499,6 +500,10 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
                 "tool_calls": tool_calls
             }
             messages.append(assistant_msg)
+            # Record the tool call in history too
+            with _history_lock:
+                conversation_history.append(assistant_msg)
+                _trim_history()
             
             if emit_phases:
                 yield (
@@ -515,14 +520,32 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
                 fn_name = tc["function"]["name"]
                 fn_args = tc["function"]["arguments"]
                 
+                # Prevent infinite loops: check if we've already run this exact call in this turn
+                call_sig = f"{fn_name}({fn_args})"
+                if call_sig in executed_tool_calls:
+                    print(f"Brain: Loop detected for {call_sig}. Breaking.")
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": "Error: Loop detected. You have already called this tool with these exact arguments. Please provide your final response based on previous results.",
+                    })
+                    continue
+                executed_tool_calls.add(call_sig)
+
                 print(f"Brain: Native tool call → {fn_name}({fn_args})")
                 res_str = await tool_bridge.handle_tool_call_async(fn_name, fn_args)
                 
-                messages.append({
+                tool_msg = {
                     "role": "tool",
                     "tool_call_id": tc_id,
                     "content": res_str,
-                })
+                }
+                messages.append(tool_msg)
+                
+                # Also keep conversation_history in sync so 'try again' works
+                with _history_lock:
+                    conversation_history.append(tool_msg)
+                    _trim_history()
                 
             # Loop around to let the LLM see the tool output and respond
             continue
