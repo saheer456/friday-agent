@@ -14,7 +14,11 @@ async def web_search(query: str) -> str:
             return results
         
         # Run synchronous DDGS search in a thread pool to avoid blocking async loop
-        results = await asyncio.to_thread(_search)
+        # 8-second timeout prevents DDG stalls from freezing the SSE stream
+        try:
+            results = await asyncio.wait_for(asyncio.to_thread(_search), timeout=8.0)
+        except asyncio.TimeoutError:
+            return "Web search timed out. Please try again in a moment."
         
         if not results:
             return "No results found."

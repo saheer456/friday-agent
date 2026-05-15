@@ -1,0 +1,48 @@
+# FRIDAY — Web-only requirements for Render.com deployment
+# Strips all audio/voice/CLI packages to stay under 512MB RAM limit.
+# Voice (STT/TTS playback) is not used in the web server; edge-tts synthesizes
+# audio on the server and streams bytes to the browser.
+
+# ── HTTP / API ────────────────────────────────────────────────────────────────
+requests==2.32.3
+httpx==0.28.1
+
+# ── FastAPI stack ─────────────────────────────────────────────────────────────
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+python-multipart==0.0.12
+pydantic==2.11.7
+pydantic-core==2.33.2
+
+# ── Environment ───────────────────────────────────────────────────────────────
+python-dotenv==1.1.1
+
+# ── LLM clients ───────────────────────────────────────────────────────────────
+groq==0.31.0
+
+# ── Text-to-Speech (server-side synthesis → browser) ─────────────────────────
+edge-tts==7.2.3
+
+# ── Embeddings (CPU-only, no torch required) ─────────────────────────────────
+sentence-transformers==5.1.0
+
+# ── Supabase (replaces aiosqlite + chromadb) ─────────────────────────────────
+supabase==2.15.2
+
+# ── Web scraping / search ─────────────────────────────────────────────────────
+duckduckgo-search==8.1.1
+beautifulsoup4==4.13.5
+readability-lxml==0.8.4.1
+
+# ── File parsers ──────────────────────────────────────────────────────────────
+pypdf==6.0.0
+docx2txt==0.9
+python-docx==1.1.2
+
+# ── Utilities ────────────────────────────────────────────────────────────────
+Pillow==11.3.0
+pyperclip==1.9.0
+youtube-transcript-api==1.2.2
+numpy==1.26.4
+tenacity==9.1.2
+rich==14.1.0

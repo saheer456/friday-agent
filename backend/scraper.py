@@ -7,14 +7,21 @@ from bs4 import BeautifulSoup
 from readability import Document
 import asyncio
 
+# ── Module-level singleton client — reuses connection pool ────────────────────
+_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+_scrape_client: httpx.AsyncClient | None = None
+
+def _get_scrape_client() -> httpx.AsyncClient:
+    global _scrape_client
+    if _scrape_client is None:
+        _scrape_client = httpx.AsyncClient(timeout=10.0, headers=_HEADERS, follow_redirects=True)
+    return _scrape_client
+
 async def scrape_url(url: str) -> str:
     """Fetches and extracts the main readable content from a URL."""
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-        
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(url, headers=headers, follow_redirects=True)
-            response.raise_for_status()
+        response = await _get_scrape_client().get(url)
+        response.raise_for_status()
             
         doc = Document(response.text)
         summary_html = doc.summary()

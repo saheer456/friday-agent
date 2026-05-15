@@ -91,7 +91,7 @@ def handle_tool_call(tool_name: str, tool_args_json: str) -> str:
 
 async def handle_tool_call_async(tool_name: str, tool_args_json: str) -> str:
     """Async-safe wrapper — runs the synchronous dispatch in the executor."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
         None, handle_tool_call, tool_name, tool_args_json
     )

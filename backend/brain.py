@@ -13,10 +13,8 @@ import asyncio
 import json
 import re
 import os
+import threading
 from pathlib import Path
-from . import rag, search, scraper, tools
-from .memory import MemoryManager
-from . import tool_bridge   # Skills framework — registers Code + Terminal skills at import
 
 _http_client = None
 _api_semaphore = None
@@ -114,9 +112,13 @@ def _openrouter_headers(base: dict) -> dict:
     h["X-Title"] = (os.getenv("OPENROUTER_APP_TITLE") or "FRIDAY").strip()
     return h
 
-# ── Load user profile (always in context — no RAG search needed) ──────────────
+# ── Load user profile (cached — only reads disk once) ────────────────────────
+_profile_cache: str | None = None
+
 def _load_profile() -> str:
-    # Check both friday/data/ and RAG system/data/ (one level up)
+    global _profile_cache
+    if _profile_cache is not None:
+        return _profile_cache
     candidates = [
         DATA_DIR / "profile.txt",
         DATA_DIR.parent.parent / "data" / "profile.txt",
@@ -124,16 +126,17 @@ def _load_profile() -> str:
     for p in candidates:
         if p.exists():
             try:
-                return p.read_text(encoding="utf-8").strip()
+                _profile_cache = p.read_text(encoding="utf-8").strip()
+                return _profile_cache
             except Exception:
                 pass
-    return ""
-
-# Profile is loaded lazily inside stream_response
+    _profile_cache = ""  # cache the "not found" result too
+    return _profile_cache
 
 # Conversation history — capped at 6 messages (3 turns) to save tokens
 conversation_history: list[dict] = []
 MAX_HISTORY = 6
+_history_lock = threading.Lock()
 
 
 def _trim_history():
@@ -143,8 +146,9 @@ def _trim_history():
 
 
 def add_to_history(role: str, content: str):
-    conversation_history.append({"role": role, "content": content})
-    _trim_history()
+    with _history_lock:
+        conversation_history.append({"role": role, "content": content})
+        _trim_history()
 
 
 
@@ -171,6 +175,7 @@ def _is_smalltalk(msg: str) -> bool:
 
 async def route_query(user_message: str) -> str:
     """Route to the right tool based on message content."""
+    from . import tools, rag, search
     msg = user_message.lower()
 
     # #5 Weather
@@ -206,26 +211,22 @@ async def route_query(user_message: str) -> str:
         res = await tools.take_screenshot()
         return f"Screen content: {res.get('description', 'Could not analyse screen.')}"
 
-    # #3 Open apps
-    import re as _re
-    if _re.search(r"\b(open|launch|start|run)\s+", msg):
-
-        for alias in ["chrome","browser","vscode","vs code","notepad","explorer","files",
-                      "calculator","calc","terminal","cmd","spotify","discord","edge"]:
-            if _re.search(rf"\b{alias}\b", msg):
+    # #3 Open apps — use APP_ALIASES from tools as single source of truth
+    if re.search(r"\b(open|launch|start|run)\s+", msg):
+        for alias in tools.APP_ALIASES:
+            if re.search(rf"\b{re.escape(alias)}\b", msg):
                 print(f"Brain: → Open {alias}")
                 tools.open_app(alias)
                 return f"Opening {alias} for you, sir."
         # Check for URL
-        urls = _re.findall(r"(https?://\S+)", user_message)
+        urls = re.findall(r"(https?://\S+)", user_message)
         if urls:
             tools.open_app(urls[0])
             return f"Opening {urls[0]}"
 
     # #7 YouTube ingestion
     if "youtube.com" in msg or "youtu.be" in msg:
-        import re as _re
-        urls = _re.findall(r"(https?://(?:www\.)?(?:youtube\.com|youtu\.be)\S+)", user_message)
+        urls = re.findall(r"(https?://(?:www\.)?(?:youtube\.com|youtu\.be)\S+)", user_message)
         if urls:
             print("Brain: → YouTube ingest")
             d = await tools.ingest_youtube(urls[0])
@@ -235,8 +236,7 @@ async def route_query(user_message: str) -> str:
 
     # #11 URL ingestion
     if any(k in msg for k in ["remember this page", "ingest this", "learn from", "read this url", "scrape"]):
-        import re as _re
-        urls = _re.findall(r"(https?://\S+)", user_message)
+        urls = re.findall(r"(https?://\S+)", user_message)
         if urls:
             print(f"Brain: → URL ingest ({urls[0]})")
             d = await tools.ingest_url(urls[0])
@@ -281,6 +281,8 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
       ("text", str)   — model token / fragment
       ("error", str)  — fatal error message (caller should stop)
     """
+    from .memory import MemoryManager
+    from . import tool_bridge
     if not await _is_online():
         yield ("error", "[Error: No internet connection. Please check your network.]")
         return
@@ -483,6 +485,8 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
                 break # Break out of provider loop on success
 
         if last_error and not full_response and not tool_calls_accumulator:
+            # Add fallback assistant entry so history stays balanced (user turn always has a reply)
+            add_to_history("assistant", "[No response generated due to an error]")
             yield ("error", last_error)
             full_response = last_error
             break

@@ -1,5 +1,6 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal
+
 title FRIDAY — Initializing...
 cd /d "%~dp0"
 
@@ -10,56 +11,124 @@ echo    Networked Assistant for You  ^|  v2.0 Sentinel
 echo  ============================================================
 echo.
 
-REM ── Check Python ─────────────────────────────────────────────
-where python >nul 2>&1
-if errorlevel 1 (
-  echo  [ERROR] Python not found. Please install Python 3.10+
-  pause & exit /b 1
+REM ─────────────────────────────────────────────────────────────
+REM Verify venv exists
+REM ─────────────────────────────────────────────────────────────
+
+if not exist "venv\Scripts\python.exe" (
+echo [ERROR] Virtual environment not found.
+echo.
+echo Create it with:
+echo     py -3.11 -m venv venv
+echo.
+pause
+exit /b 1
 )
 
-REM ── Check Node / npm ─────────────────────────────────────────
+REM ─────────────────────────────────────────────────────────────
+REM Force isolated environment
+REM ─────────────────────────────────────────────────────────────
+
+set PYTHONNOUSERSITE=1
+set PYTHONPATH=
+set PIP_DISABLE_PIP_VERSION_CHECK=1
+
+REM Activate venv
+call venv\Scripts\activate.bat
+
+REM ─────────────────────────────────────────────────────────────
+REM Verify correct interpreter
+REM ─────────────────────────────────────────────────────────────
+
+echo [INFO] Python executable:
+where python
+
+echo.
+python --version
+
+echo.
+echo [INFO] Checking environment isolation...
+python -c "import sys; print('\n'.join(sys.path))"
+
+echo.
+echo ============================================================
+echo.
+
+REM ─────────────────────────────────────────────────────────────
+REM Check npm
+REM ─────────────────────────────────────────────────────────────
+
 where npm >nul 2>&1
 if errorlevel 1 (
-  echo  [WARN]  npm not found — skipping frontend build check.
-  goto :start_server
+echo [WARN] npm not found — skipping frontend build.
+goto :start_server
 )
 
-REM ── Rebuild React frontend if source is newer than dist ──────
+REM ─────────────────────────────────────────────────────────────
+REM Build frontend if needed
+REM ─────────────────────────────────────────────────────────────
+
 if not exist "frontend\dist\index.html" (
-  echo  [BUILD] React dist not found — building frontend...
-  cd frontend
-  call npm install --silent
-  call npm run build
-  cd ..
-  if errorlevel 1 (
-    echo  [ERROR] Frontend build failed. Run 'cd frontend ^&^& npm run build' manually.
-    pause & exit /b 1
-  )
-  echo  [BUILD] React frontend built successfully.
-  echo.
+echo [BUILD] Frontend dist missing — building...
+cd frontend
+
+```
+call npm install
+if errorlevel 1 (
+    echo [ERROR] npm install failed.
+    pause
+    exit /b 1
+)
+
+call npm run build
+if errorlevel 1 (
+    echo [ERROR] Frontend build failed.
+    pause
+    exit /b 1
+)
+
+cd ..
+echo [BUILD] Frontend build complete.
+echo.
+```
+
 )
 
 :start_server
-title FRIDAY Web — Running on http://127.0.0.1:8080
 
-REM ── Delay, then open browser ─────────────────────────────────
-start "" cmd /c "ping 127.0.0.1 -n 5 >nul & start http://127.0.0.1:8080/"
+title FRIDAY Web — http://127.0.0.1:8080
 
-echo  [START] Booting FastAPI server on http://127.0.0.1:8080
-echo  [INFO]  Press Ctrl+C to stop the server.
-echo  [INFO]  For hot-reload dev mode: cd frontend ^&^& npm run dev
-echo  ============================================================
+echo [START] Booting FastAPI server...
+echo [INFO]  URL: http://127.0.0.1:8080
+echo [INFO]  Ctrl+C to stop
+echo ============================================================
 echo.
 
-python -m uvicorn web.server:app --host 127.0.0.1 --port 8080
+REM Open browser after delay
+start "" cmd /c "ping 127.0.0.1 -n 5 >nul && start http://127.0.0.1:8080/"
 
-REM ── Server exited ─────────────────────────────────────────────
+REM ─────────────────────────────────────────────────────────────
+REM Run server
+REM ─────────────────────────────────────────────────────────────
+
+python -X faulthandler -X dev -m uvicorn web.server:app ^
+    --host 127.0.0.1 ^
+    --port 8080 ^
+    --log-level trace
+
+REM ─────────────────────────────────────────────────────────────
+REM Exit handling
+REM ─────────────────────────────────────────────────────────────
+
 echo.
+echo ============================================================
+
 if errorlevel 1 (
-  echo  [FAULT] Server exited with an error.
-  echo  [TIP]   Try: pip install fastapi "uvicorn[standard]" aiosqlite pydantic
+echo [FAULT] Server exited with error.
 ) else (
-  echo  [INFO] Server stopped.
+echo [INFO] Server stopped normally.
 )
+
+echo ============================================================
 echo.
 pause

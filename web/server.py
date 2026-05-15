@@ -5,9 +5,18 @@ Run from repo root: python -m uvicorn web.server:app --host 127.0.0.1 --port 808
 
 from __future__ import annotations
 
+import faulthandler
+faulthandler.enable()
+
+import traceback
+
+print("[BOOT] server.py import started")
+
 import json
 import os
 import sys
+import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -19,13 +28,16 @@ from dotenv import load_dotenv
 
 load_dotenv(ROOT / ".env")
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel, Field
 
 from backend import brain
+
+print("[BOOT] brain imported")
 
 
 def _voice_stack_info() -> dict:
@@ -51,10 +63,25 @@ def _llm_stack_info() -> dict:
 def _readiness_info() -> dict:
     """Live readiness flags — used by the frontend status badges."""
     return {
-        "memory_ready": True,  # Using fast aiosqlite now
-        "tts_ready": _tts_ready,
+        "memory_ready": True,
+        "tts_ready": _tts_ready.is_set(),
         "stt_ready": _stt_ready,
     }
+
+
+# ── API Key authentication ─────────────────────────────────────────────────────
+# If FRIDAY_API_KEY is set in env, all sensitive endpoints require
+# the header:  X-API-Key: <value>
+# If NOT set, all requests are allowed (local dev mode).
+# ───────────────────────────────────────────────────────────────
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+async def verify_api_key(api_key: str | None = Security(_api_key_header)):
+    required = os.getenv("FRIDAY_API_KEY", "").strip()
+    if not required:
+        return   # local dev — no key required
+    if api_key != required:
+        raise HTTPException(status_code=403, detail="Invalid or missing API key.")
 
 
 def _ui_info() -> dict:
@@ -66,62 +93,152 @@ def _ui_info() -> dict:
 
 app = FastAPI(title="FRIDAY Web", version="1.0")
 
-REACT_DIST_DIR = ROOT / "frontend" / "dist"
-app.mount("/assets", StaticFiles(directory=str(REACT_DIST_DIR / "assets")), name="assets")
+print("[BOOT] FastAPI app created")
 
+REACT_DIST_DIR = ROOT / "frontend" / "dist"
+
+ASSETS_DIR = REACT_DIST_DIR / "assets"
+
+# ───────────────────────────────────────────────────────────────
+# Lifespan (replaces deprecated @app.on_event("startup"))
+# ───────────────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup + shutdown lifecycle handler."""
+    import asyncio
+    import threading as _threading
+
+    print("[STARTUP] Startup sequence begin")
+
+    # Environment validation
+    try:
+        print("[STARTUP] Validating environment...")
+        from backend.validation import validate_environment
+        validate_environment()
+        print("[STARTUP] ✓ Environment valid")
+    except Exception:
+        print("[STARTUP] Environment validation failed")
+        traceback.print_exc()
+
+    # Memory system
+    try:
+        await initialize_memory()
+    except Exception:
+        print("[STARTUP] Memory init failed")
+        traceback.print_exc()
+
+    # TTS warmup (background — does not block server bind)
+    try:
+        _threading.Thread(target=_load_tts, daemon=True, name="warmup-tts").start()
+        asyncio.create_task(_ping_edge_tts())
+        print("[STARTUP] ✓ TTS warmup started")
+    except Exception:
+        print("[STARTUP] TTS warmup failed")
+        traceback.print_exc()
+
+    print("[STARTUP] Startup sequence complete")
+
+    yield  # ← server is running
+
+    # ─ Shutdown cleanup ─
+    print("[SHUTDOWN] Closing HTTP client...")
+    try:
+        from backend.brain import _get_http_client
+        await _get_http_client().aclose()
+        print("[SHUTDOWN] ✓ HTTP client closed")
+    except Exception:
+        pass
+
+
+app = FastAPI(title="FRIDAY Web", version="1.0", lifespan=lifespan)
+
+print("[BOOT] FastAPI app created")
+
+# CORS: explicit origins, not wildcard (wildcard + credentials is spec-forbidden)
+_ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "FRIDAY_ALLOWED_ORIGINS",
+        "http://localhost:8080,http://127.0.0.1:8080"
+    ).split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "Authorization", "X-API-Key"],
 )
 
+REACT_DIST_DIR = ROOT / "frontend" / "dist"
+ASSETS_DIR = REACT_DIST_DIR / "assets"
 
-# ── Readiness flags (set during warmup, read by /api/system) ──────────────────
-_tts_ready = False
-_stt_ready = True   # STT is Whisper — loaded on demand; mark ready by default
+if REACT_DIST_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 
-# ── Startup warmup — block until slow models are ready ────────────────────────
-@app.on_event("startup")
-async def _warmup():
-    import asyncio, threading
-    from backend.validation import validate_environment
-    
-    # ── Environment Validation (Phase 1) ──────────────────────────────────────
-    validate_environment()
 
-    # ── Core Memory Layer (Phase 2) ───────────────────────────────────────────
-    from backend.memory import MemoryManager
-    await MemoryManager.initialize()
+# ───────────────────────────────────────────────────────────────
+# Runtime readiness flags
+# ───────────────────────────────────────────────────────────────
 
-    # ── TTS: fire-and-forget — not required before first chat
-    threading.Thread(target=_load_tts, daemon=True, name="warmup-tts").start()
-    asyncio.create_task(_ping_edge_tts())
+# threading.Event is explicitly thread-safe (unlike a plain bool)
+_tts_ready = threading.Event()
+_stt_ready = True
+_memory_ready = False
+
+# ─────────────────────────────────────────────────────────────
+# Safe memory initialization
+# ─────────────────────────────────────────────────────────────
+
+async def initialize_memory():
+    global _memory_ready
+
+    if _memory_ready:
+        return
+
+    try:
+        print("[MEMORY] Importing MemoryManager...")
+
+        from backend.memory import MemoryManager
+
+        print("[MEMORY] Initializing memory...")
+
+        await MemoryManager.initialize()
+
+        _memory_ready = True
+
+        print("[MEMORY] ✓ Memory initialized")
+
+    except Exception:
+        print("[MEMORY] FAILED")
+        traceback.print_exc()
 
 
 
 
 def _load_tts():
-    global _tts_ready
     try:
+        print("[TTS] Loading Kokoro...")
         from backend.tts import _get_kokoro
         _get_kokoro()
-        _tts_ready = True
-        print("[FRIDAY] ✓ Kokoro TTS warmed up")
+        _tts_ready.set()  # thread-safe Event
+        print("[TTS] ✓ Kokoro ready")
     except Exception:
-        pass
-
+        print("[TTS] Kokoro FAILED")
+        traceback.print_exc()
 
 async def _ping_edge_tts():
-    global _tts_ready
     try:
+        print("[TTS] Pinging Edge-TTS...")
         from backend.tts import synthesize
-        await synthesize("Hi")
-        _tts_ready = True
-        print("[FRIDAY] ✓ Edge-TTS warmed up")
+        await synthesize("Hello")
+        _tts_ready.set()  # thread-safe Event
+        print("[TTS] ✓ Edge-TTS ready")
     except Exception:
-        pass
+        print("[TTS] Edge-TTS FAILED")
+        traceback.print_exc()
 
 
 class ChatBody(BaseModel):
@@ -152,7 +269,7 @@ async def system_info():
 
 
 @app.post("/api/chat/stream")
-async def chat_stream(body: ChatBody):
+async def chat_stream(body: ChatBody, _auth: None = Depends(verify_api_key)):
     """SSE: phase + token + error events, then `[DONE]`."""
 
     def _friendly_error(raw: str) -> str:
@@ -190,7 +307,7 @@ async def chat_stream(body: ChatBody):
 
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), _auth: None = Depends(verify_api_key)):
     """Ingest a file into FRIDAY's semantic knowledge base."""
     from backend.file_intelligence import ingest_file
 
@@ -215,7 +332,7 @@ async def upload_file(file: UploadFile = File(...)):
 
 
 @app.post("/api/clear")
-async def clear_history():
+async def clear_history(_auth: None = Depends(verify_api_key)):
     brain.conversation_history.clear()
     return {"ok": True}
 
@@ -225,7 +342,7 @@ class TTSBody(BaseModel):
 
 
 @app.post("/api/tts")
-async def tts_endpoint(body: TTSBody):
+async def tts_endpoint(body: TTSBody, _auth: None = Depends(verify_api_key)):
     """Synthesize text → audio via the backend TTS pipeline (edge-tts / Kokoro).
     Returns MP3 or WAV bytes for the browser to play natively.
     """
@@ -246,7 +363,7 @@ async def tts_endpoint(body: TTSBody):
 
 
 @app.post("/api/speak")
-async def speak_endpoint(body: TTSBody):
+async def speak_endpoint(body: TTSBody, _auth: None = Depends(verify_api_key)):
     """Convert Markdown → natural spoken prose via LLM, then synthesize.
     Uses llama-3.1-8b-instant (fast, cheap) to rewrite the text naturally
     before passing to TTS. Far better quality than regex-based cleaning.

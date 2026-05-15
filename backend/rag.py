@@ -37,10 +37,15 @@ def _get_embeddings():
 
 
 # ── ChromaDB helpers ─────────────────────────────────────────────────────────
+_vs_instance = None  # singleton — avoid reopening the SQLite file on every search
+
 def _vectorstore():
-    from langchain_chroma import Chroma  # lazy import
-    os.makedirs(VECTORSTORE_DIR, exist_ok=True)
-    return Chroma(persist_directory=str(VECTORSTORE_DIR), embedding_function=_get_embeddings())
+    global _vs_instance
+    if _vs_instance is None:
+        from langchain_chroma import Chroma  # lazy import
+        os.makedirs(VECTORSTORE_DIR, exist_ok=True)
+        _vs_instance = Chroma(persist_directory=str(VECTORSTORE_DIR), embedding_function=_get_embeddings())
+    return _vs_instance
 
 
 def _get_hashes() -> set:
@@ -56,8 +61,12 @@ def _save_hash(h: str):
 
 
 def _file_hash(path: str) -> str:
+    """Stream file in 64 KB chunks to avoid loading large files into RAM."""
+    h = hashlib.sha256()
     with open(path, "rb") as f:
-        return hashlib.sha256(f.read()).hexdigest()
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 # ── Ingestion ─────────────────────────────────────────────────────────────────
@@ -70,6 +79,7 @@ def ingest_files():
     hashes  = _get_hashes()
     splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=60)
     new_docs = []
+    hashes_to_save = []  # accumulate; only write after successful add_documents
 
     for fp in DATA_DIR.glob("**/*"):
         if not fp.is_file() or fp.suffix.lower() not in SUPPORTED:
@@ -90,7 +100,7 @@ def ingest_files():
 
             docs = loader.load()
             new_docs.extend(docs)
-            _save_hash(fh)
+            hashes_to_save.append(fh)  # deferred — only saved after add_documents succeeds
 
         except Exception as e:
             print(f"  ✗ Error loading {fp.name}: {e}")
@@ -98,6 +108,9 @@ def ingest_files():
     if new_docs:
         splits = splitter.split_documents(new_docs)
         vs.add_documents(splits)
+        # Only record hashes after the embed+store actually succeeded
+        for h in hashes_to_save:
+            _save_hash(h)
         print(f"✓ Ingested {len(splits)} chunks from {len(new_docs)} pages.")
     else:
         print("No new documents to ingest.")

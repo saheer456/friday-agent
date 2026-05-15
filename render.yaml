@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: friday-ai
+    runtime: python
+    buildCommand: pip install -r requirements-web.txt
+    startCommand: uvicorn web.server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: FRIDAY_TTS_BACKEND
+        value: edge
+      - key: FRIDAY_ALLOWED_ORIGINS
+        value: https://friday-ai.onrender.com
+      # Set these in the Render dashboard — do NOT commit actual values
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: FRIDAY_LLM_PROVIDER
+        value: groq
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      # Auto-generated API key — protects endpoints from public access
+      - key: FRIDAY_API_KEY
+        generateValue: true

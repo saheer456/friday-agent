@@ -1,4 +1,5 @@
 import os
+import platform
 import re
 import base64
 import io
@@ -10,6 +11,26 @@ from datetime import datetime
 import httpx
 
 from . import rag, scraper
+
+# ── Module-level HTTP client (reuses connection pool) ─────────────────────────
+_weather_client: httpx.AsyncClient | None = None
+
+def _get_weather_client() -> httpx.AsyncClient:
+    global _weather_client
+    if _weather_client is None:
+        _weather_client = httpx.AsyncClient(timeout=8.0)
+    return _weather_client
+
+
+def _open_file(path: str) -> None:
+    """Cross-platform file/URL opener."""
+    system = platform.system()
+    if system == "Windows":
+        os.startfile(path)  # type: ignore[attr-defined]
+    elif system == "Darwin":
+        subprocess.Popen(["open", path])
+    else:
+        subprocess.Popen(["xdg-open", path])
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
@@ -34,9 +55,8 @@ async def get_weather(lat: float = None, lon: float = None) -> dict:
             f"&daily=temperature_2m_max,temperature_2m_min"
             f"&timezone=auto&forecast_days=1"
         )
-        async with httpx.AsyncClient(timeout=8.0) as c:
-            r = await c.get(url)
-            r.raise_for_status()
+        r = await _get_weather_client().get(url)
+        r.raise_for_status()
         d = r.json()
         cur = d["current"]
         WMO = {0:"Clear sky",1:"Mainly clear",2:"Partly cloudy",3:"Overcast",
@@ -77,9 +97,13 @@ def read_clipboard() -> dict:
 
 async def take_screenshot() -> dict:
     try:
-        from PIL import ImageGrab
+        try:
+            from PIL import ImageGrab
+            img = ImageGrab.grab()
+        except (ImportError, OSError):
+            return {"status": "error", "error": "Screenshot not supported on this platform."}
         buf = io.BytesIO()
-        ImageGrab.grab().save(buf, format="PNG")
+        img.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode()
         api_key = os.getenv("GROQ_API_KEY", "")
         payload = {
@@ -106,11 +130,11 @@ def open_app(target: str) -> dict:
         if target.startswith("http"):
             webbrowser.open(target)
             return {"status": "success", "opened": target}
-        
-        cmd = APP_ALIASES.get(target, target)
-        import shlex
-        args = shlex.split(cmd, posix=False)
-        subprocess.Popen(args, shell=False)
+
+        cmd = APP_ALIASES.get(target)
+        if cmd is None:
+            return {"error": f"Unknown app: '{target}'. Allowed: {list(APP_ALIASES.keys())}"}
+        subprocess.Popen([cmd], shell=False)
         return {"status": "success", "opened": cmd}
     except Exception as e:
         return {"error": str(e)}
@@ -153,13 +177,10 @@ def send_email(to: str, subject: str, body: str) -> dict:
     """Opens the default email client with pre-filled details."""
     import urllib.parse
     try:
-        # Construct the mailto URI
         subject_encoded = urllib.parse.quote(subject)
         body_encoded = urllib.parse.quote(body)
         mailto_url = f"mailto:{to}?subject={subject_encoded}&body={body_encoded}"
-        
-        # Open default mail client
-        os.startfile(mailto_url)
+        _open_file(mailto_url)
         return {"status": "success", "message": "Opened email client with draft."}
     except Exception as e:
         return {"error": str(e)}
@@ -197,7 +218,7 @@ END:VCALENDAR
             f.write(ics_content)
             
         # Open with default calendar app
-        os.startfile(path)
+        _open_file(path)
         return {"status": "success", "message": "Opened calendar app to save event."}
     except Exception as e:
         return {"error": str(e)}

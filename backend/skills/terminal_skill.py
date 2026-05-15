@@ -12,6 +12,7 @@ SAFETY:
 from __future__ import annotations
 
 import os
+import re as _re
 import shlex
 import subprocess
 import sys
@@ -25,6 +26,7 @@ _HARD_BLOCK = {
     "rm", "rmdir", "del", "format", "mkfs", "dd",
     "shutdown", "reboot", "halt", "poweroff",
     ":(){ :|:& };:",   # fork bomb
+    "deltree", "cipher", "sfc", "bcdedit", "diskpart",
 }
 
 
@@ -77,12 +79,19 @@ class TerminalSkill(BaseSkill):
         return p
 
     def _is_blocked(self, command: str) -> bool:
+        """Block if any token is a dangerous command OR shell metacharacters present."""
+        # Block shell metacharacters that enable command chaining
+        if _re.search(r"[;&|`$()]", command):
+            return True
         try:
             parts = shlex.split(command, posix=(sys.platform != "win32"))
-            base  = Path(parts[0]).name.lower() if parts else ""
-            return base in _HARD_BLOCK
-        except Exception:
-            return False
+        except ValueError:
+            return True  # malformed shell input -> block
+        # Check every token, not just the first
+        for part in parts:
+            if Path(part).name.lower() in _HARD_BLOCK:
+                return True
+        return False
 
     # ── Actions ────────────────────────────────────────────────────────────────
 
@@ -106,9 +115,14 @@ class TerminalSkill(BaseSkill):
 
         work_dir = self._workspace if cwd is None else self._check_path(cwd)
         try:
+            # shell=False + tokenized list prevents shell injection
+            try:
+                parts = shlex.split(command, posix=(sys.platform != "win32"))
+            except ValueError as e:
+                return SkillResult.fail(f"Invalid command syntax: {e}")
             proc = subprocess.run(
-                command,
-                shell=True,
+                parts,
+                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=self._timeout,
