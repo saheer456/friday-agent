@@ -248,7 +248,20 @@ class ChatBody(BaseModel):
 
 @app.get("/")
 async def index():
-    return FileResponse(ROOT / "frontend" / "dist" / "index.html")
+    dist_index = ROOT / "frontend" / "dist" / "index.html"
+    if not dist_index.exists():
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(
+            "<html><body style='background:#000;color:#0f0;font-family:monospace;padding:2rem'>"
+            "<h2>FRIDAY API is running ✓</h2>"
+            "<p>Frontend not built. If you see this on Render, check that the build step ran correctly.</p>"
+            "<p><a href='/health' style='color:#0f0'>/health</a> &nbsp; "
+            "<a href='/docs' style='color:#0f0'>/docs</a></p>"
+            "</body></html>",
+            status_code=200
+        )
+    return FileResponse(dist_index)
+
 
 
 @app.get("/health")
