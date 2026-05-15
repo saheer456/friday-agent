@@ -49,19 +49,27 @@ async def _is_online() -> bool:
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+CEREBRAS_URL = "https://api.cerebras.ai/v1/chat/completions"
+
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 DEFAULT_OPENROUTER_MODEL = "google/gemini-2.0-flash-lite-preview-02-05:free"
+DEFAULT_CEREBRAS_MODEL = "llama-3.3-70b"
+
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 
 def _llm_provider() -> str:
     explicit = os.getenv("FRIDAY_LLM_PROVIDER", "").strip().lower()
-    if explicit in ("groq", "openrouter"):
+    if explicit in ("groq", "openrouter", "cerebras"):
         return explicit
     gq = (os.getenv("GROQ_API_KEY") or "").strip()
     or_k = (os.getenv("OPENROUTER_API_KEY") or "").strip()
+    cr_k = (os.getenv("CEREBRAS_API_KEY") or "").strip()
+    
     if gq and "your_" not in gq.lower():
         return "groq"
+    if cr_k and "your_" not in cr_k.lower():
+        return "cerebras"
     if or_k and "your_" not in or_k.lower():
         return "openrouter"
     return "groq"
@@ -83,22 +91,37 @@ def _is_key_usable(key: str) -> bool:
     return bool(key) and "your_" not in key.lower()
 
 
-def _fallback_stream_configs() -> list[tuple[str, str, str, str]]:
+def _fallback_stream_configs(is_heavy: bool = False) -> list[tuple[str, str, str, str]]:
     """
     Preferred provider first, then the alternate provider if configured.
-    This lets FRIDAY survive transient provider/network faults.
+    If is_heavy=True, Cerebras is moved to the front.
     """
     primary = _llm_provider()
-    order = [primary, "openrouter" if primary == "groq" else "groq"]
+    order = [primary]
+    
+    potential = ["cerebras", "groq", "openrouter"]
+    for p in potential:
+        if p not in order:
+            order.append(p)
+            
+    if is_heavy and "cerebras" in order:
+        order.remove("cerebras")
+        order.insert(0, "cerebras")
+
     configs: list[tuple[str, str, str, str]] = []
 
     for provider in order:
-        if provider == "openrouter":
+        if provider == "cerebras":
+            key = (os.getenv("CEREBRAS_API_KEY") or "").strip()
+            model = (os.getenv("CEREBRAS_MODEL") or DEFAULT_CEREBRAS_MODEL).strip()
+            if _is_key_usable(key):
+                configs.append((CEREBRAS_URL, key, model, "Cerebras"))
+        elif provider == "openrouter":
             key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
             model = (os.getenv("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL).strip()
             if _is_key_usable(key):
                 configs.append((OPENROUTER_URL, key, model, "OpenRouter"))
-        else:
+        elif provider == "groq":
             key = (os.getenv("GROQ_API_KEY") or "").strip()
             model = (os.getenv("GROQ_MODEL") or DEFAULT_GROQ_MODEL).strip()
             if _is_key_usable(key):
@@ -287,10 +310,17 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
         yield ("error", "[Error: No internet connection. Please check your network.]")
         return
 
-    stream_configs = _fallback_stream_configs()
+    # Detect heavy reasoning / long output needs
+    is_heavy = any(k in user_message.lower() for k in [
+        "reason", "think", "complex", "deep", "analyze", "analyse",
+        "long", "large", "big", "extensive", "detailed",
+        "code", "script", "program", "develop", "build"
+    ])
+
+    stream_configs = _fallback_stream_configs(is_heavy=is_heavy)
     if not stream_configs:
-        preferred = "OpenRouter" if _llm_provider() == "openrouter" else "Groq"
-        yield ("error", f"[Error: API key missing for {preferred} — set OPENROUTER_API_KEY or GROQ_API_KEY in .env]")
+        preferred = _llm_provider().capitalize()
+        yield ("error", f"[Error: API key missing for {preferred} — set API keys in .env]")
         return
 
     if emit_phases:

@@ -22,14 +22,25 @@ from .skill_base import BaseSkill, SkillResult, skill_action
 def _api_config():
     """Read LLM config from env vars directly (avoids circular import with brain.py)."""
     provider = os.getenv("FRIDAY_LLM_PROVIDER", "").lower()
-    groq_key = os.getenv("GROQ_API_KEY", "")
-    or_key   = os.getenv("OPENROUTER_API_KEY", "")
+    cerebras_key = os.getenv("CEREBRAS_API_KEY", "")
+    groq_key     = os.getenv("GROQ_API_KEY", "")
+    or_key       = os.getenv("OPENROUTER_API_KEY", "")
+
+    # Prioritize Cerebras for heavy code tasks if available
+    if (provider == "cerebras" or cerebras_key) and "your_" not in cerebras_key.lower():
+        return (
+            "https://api.cerebras.ai/v1/chat/completions",
+            cerebras_key,
+            os.getenv("CEREBRAS_MODEL", "llama-3.3-70b"),
+        )
+    
     if provider == "openrouter" or (not groq_key and or_key):
         return (
             "https://openrouter.ai/api/v1/chat/completions",
             or_key,
-            os.getenv("OPENROUTER_MODEL", "qwen/qwen3-235b-a22b:free"),
+            os.getenv("OPENROUTER_MODEL", "google/gemini-2.0-flash-lite-preview-02-05:free"),
         )
+    
     return (
         "https://api.groq.com/openai/v1/chat/completions",
         groq_key,
