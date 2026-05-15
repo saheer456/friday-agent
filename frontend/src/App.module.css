@@ -3,6 +3,7 @@
   height: 100vh;
   width: 100vw;
   overflow: hidden;
+  position: relative;
 }
 
 .mainCol {
@@ -28,4 +29,15 @@
   letter-spacing: 1.5px;
   border-top: 1px solid var(--outline);
   background: var(--bg1);
+}
+
+/* ── Mobile ─────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .composerWrap {
+    padding: 0 12px 16px;
+  }
+
+  .footer {
+    display: none;
+  }
 }

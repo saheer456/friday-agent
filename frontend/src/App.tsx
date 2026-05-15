@@ -11,6 +11,7 @@ import styles from './App.module.css';
 
 function App() {
   const [statusText, setStatusText] = useState('Online');
+  const [telemetryOpen, setTelemetryOpen] = useState(false);
 
   const { system, fetchSystem } = useSystem();
   const uploadState = useFileUpload();
@@ -51,6 +52,7 @@ function App() {
           statusText={statusText}
           isBusy={chatBusy}
           onClearChat={clearChat}
+          onToggleTelemetry={() => setTelemetryOpen(o => !o)}
         />
 
         <ChatArea
@@ -78,7 +80,12 @@ function App() {
         </footer>
       </div>
 
-      <Telemetry system={system} phases={phases} />
+      <Telemetry
+        system={system}
+        phases={phases}
+        isOpen={telemetryOpen}
+        onClose={() => setTelemetryOpen(false)}
+      />
     </div>
   );
 }

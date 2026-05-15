@@ -1,13 +1,15 @@
 import styles from './Header.module.css';
+import { Activity } from 'lucide-react';
 
 interface HeaderProps {
   version: string;
   statusText: string;
   isBusy: boolean;
   onClearChat: () => void;
+  onToggleTelemetry: () => void;
 }
 
-export function Header({ version, statusText, isBusy, onClearChat }: HeaderProps) {
+export function Header({ version, statusText, isBusy, onClearChat, onToggleTelemetry }: HeaderProps) {
   return (
     <header className={styles.header}>
       <div className={styles.logoRing}>
@@ -25,6 +27,15 @@ export function Header({ version, statusText, isBusy, onClearChat }: HeaderProps
         <span className={styles.statusText}>{statusText}</span>
         <button type="button" className={styles.btnClear} onClick={onClearChat}>
           Clear chat
+        </button>
+        {/* Mobile: telemetry toggle */}
+        <button
+          type="button"
+          className={styles.btnTelemetry}
+          onClick={onToggleTelemetry}
+          aria-label="Toggle telemetry"
+        >
+          <Activity size={18} />
         </button>
       </div>
     </header>

@@ -8,6 +8,7 @@
   gap: 18px;
   flex-shrink: 0;
   overflow-y: auto;
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .telemetryHead {
@@ -182,4 +183,66 @@
 .phDetail {
   color: #9ca3af;
   word-break: break-word;
+}
+
+/* ── Close button (mobile only) ─── */
+.closeBtn {
+  display: none;
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--outline);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+/* ── Mobile overlay ─── */
+@media (max-width: 768px) {
+  .telemetry {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 200;
+    width: min(300px, 90vw);
+    transform: translateX(100%);
+    border-left: 1px solid var(--outline);
+    box-shadow: -8px 0 32px rgba(46,50,48,0.14);
+  }
+
+  .telemetry.open {
+    transform: translateX(0);
+  }
+
+  .closeBtn {
+    display: flex;
+  }
+}
+
+/* ── Mobile backdrop ─── */
+.backdrop {
+  display: none;
+}
+@media (max-width: 768px) {
+  .backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 199;
+    background: rgba(46,50,48,0.35);
+    backdrop-filter: blur(2px);
+    animation: fade-in 0.2s ease;
+  }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }

@@ -114,3 +114,64 @@
   border-color: rgba(239, 68, 68, 0.3);
   color: #b91c1c;
 }
+
+/* ── Telemetry toggle button (mobile only) ─── */
+.btnTelemetry {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--outline);
+  color: var(--text-muted);
+  background: transparent;
+  transition: all 0.18s ease;
+}
+.btnTelemetry:hover {
+  background: var(--primary-dim);
+  border-color: var(--primary-border);
+  color: var(--primary);
+}
+
+/* ── Mobile ─────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .header {
+    padding: 14px 16px;
+    gap: 10px;
+  }
+
+  .logoRing {
+    width: 36px;
+    height: 36px;
+  }
+  .logoCore {
+    width: 16px;
+    height: 16px;
+  }
+
+  .titles {
+    margin-left: 10px;
+  }
+  .titles h1 {
+    font-size: 1.1rem;
+  }
+  .versionPill {
+    display: none;
+  }
+  .tagline {
+    display: none;
+  }
+
+  .statusText {
+    display: none;
+  }
+  .btnClear {
+    padding: 7px 12px;
+    font-size: 0.76rem;
+  }
+
+  .btnTelemetry {
+    display: flex;
+  }
+}

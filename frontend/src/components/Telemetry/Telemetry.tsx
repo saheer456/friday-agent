@@ -4,6 +4,8 @@ import styles from './Telemetry.module.css';
 interface TelemetryProps {
   system: SystemInfo | null;
   phases: Phase[];
+  isOpen: boolean;
+  onClose: () => void;
 }
 
 function StatusBadge({ active, label }: { active: boolean; label: string }) {
@@ -20,7 +22,7 @@ function StatusBadge({ active, label }: { active: boolean; label: string }) {
 function SpecGrid({ items }: { items: [string, string][] }) {
   return (
     <dl className={styles.specGrid}>
-      {items.length === 0 ? <div className={styles.specSkel}></div> : 
+      {items.length === 0 ? <div className={styles.specSkel}></div> :
         items.map(([key, val], i) => (
           <div key={i} style={{ display: 'contents' }}>
             <dt>{key}</dt>
@@ -32,61 +34,72 @@ function SpecGrid({ items }: { items: [string, string][] }) {
   );
 }
 
-export function Telemetry({ system, phases }: TelemetryProps) {
+export function Telemetry({ system, phases, isOpen, onClose }: TelemetryProps) {
   const rd = system?.readiness || { memory_ready: false, tts_ready: false, stt_ready: true };
   const v = system?.voice || {} as any;
   const L = system?.llm || {} as any;
 
   return (
-    <aside className={styles.telemetry} aria-label="Neural telemetry">
-      <div className={styles.telemetryHead}>
-        <span className={styles.telemetryDot}></span>
-        <h2>Neural Telemetry</h2>
-      </div>
+    <>
+      {/* Mobile backdrop */}
+      {isOpen && <div className={styles.backdrop} onClick={onClose} />}
 
-      <section className={`${styles.stackCard} ${styles.statusCard}`}>
-        <h3>System status</h3>
-        <StatusBadge active={rd.memory_ready} label="Memory (MiniLM)" />
-        <StatusBadge active={rd.tts_ready} label="TTS Engine" />
-        <StatusBadge active={rd.stt_ready} label="STT (Whisper)" />
-      </section>
+      <aside
+        className={`${styles.telemetry} ${isOpen ? styles.open : ''}`}
+        aria-label="Neural telemetry"
+      >
+        {/* Mobile close button */}
+        <button className={styles.closeBtn} onClick={onClose} aria-label="Close telemetry">✕</button>
 
-      <section className={styles.stackCard}>
-        <h3>Voice stack</h3>
-        <SpecGrid items={system ? [
-          ['STT', `${v.stt_model || '?'} · ${v.stt_compute || ''}`.trim()],
-          ['Device', v.stt_device || 'cpu'],
-          ['TTS', v.tts_backend || 'auto'],
-          ['Voice', v.tts_voice || '—'],
-          ['VAD', `mode ${v.vad_mode ?? '2'}`]
-        ] : []} />
-      </section>
-
-      <section className={styles.stackCard}>
-        <h3>Language uplink</h3>
-        <SpecGrid items={system ? [
-          ['Provider', L.llm_provider || '—'],
-          ['Model', L.llm_model || '—'],
-          ['Host', L.llm_url_host || '—'],
-          ['Turns', String(system.history_turns ?? 0)]
-        ] : []} />
-      </section>
-
-      <section className={`${styles.stackCard} ${styles.feedCard}`}>
-        <div className={styles.feedHead}>
-          <span className={styles.feedPulse}></span>
-          <h3>Backend trace</h3>
+        <div className={styles.telemetryHead}>
+          <span className={styles.telemetryDot}></span>
+          <h2>Neural Telemetry</h2>
         </div>
-        <div className={styles.phaseFeed}>
-          {phases.map((p, i) => (
-            <div key={i} className={styles.phaseLine}>
-              <span className={styles.phId}>{p.id}</span>
-              <div className={styles.phTitle}>{p.title}</div>
-              <div className={styles.phDetail}>{p.detail}</div>
-            </div>
-          ))}
-        </div>
-      </section>
-    </aside>
+
+        <section className={`${styles.stackCard} ${styles.statusCard}`}>
+          <h3>System status</h3>
+          <StatusBadge active={rd.memory_ready} label="Memory (MiniLM)" />
+          <StatusBadge active={rd.tts_ready} label="TTS Engine" />
+          <StatusBadge active={rd.stt_ready} label="STT (Whisper)" />
+        </section>
+
+        <section className={styles.stackCard}>
+          <h3>Voice stack</h3>
+          <SpecGrid items={system ? [
+            ['STT', `${v.stt_model || '?'} · ${v.stt_compute || ''}`.trim()],
+            ['Device', v.stt_device || 'cpu'],
+            ['TTS', v.tts_backend || 'auto'],
+            ['Voice', v.tts_voice || '—'],
+            ['VAD', `mode ${v.vad_mode ?? '2'}`]
+          ] : []} />
+        </section>
+
+        <section className={styles.stackCard}>
+          <h3>Language uplink</h3>
+          <SpecGrid items={system ? [
+            ['Provider', L.llm_provider || '—'],
+            ['Model', L.llm_model || '—'],
+            ['Host', L.llm_url_host || '—'],
+            ['Turns', String(system.history_turns ?? 0)]
+          ] : []} />
+        </section>
+
+        <section className={`${styles.stackCard} ${styles.feedCard}`}>
+          <div className={styles.feedHead}>
+            <span className={styles.feedPulse}></span>
+            <h3>Backend trace</h3>
+          </div>
+          <div className={styles.phaseFeed}>
+            {phases.map((p, i) => (
+              <div key={i} className={styles.phaseLine}>
+                <span className={styles.phId}>{p.id}</span>
+                <div className={styles.phTitle}>{p.title}</div>
+                <div className={styles.phDetail}>{p.detail}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      </aside>
+    </>
   );
 }
