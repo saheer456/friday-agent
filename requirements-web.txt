@@ -23,8 +23,8 @@ groq==0.31.0
 # ── Text-to-Speech (server-side synthesis → browser) ─────────────────────────
 edge-tts==7.2.3
 
-# ── Embeddings (CPU-only, no torch required) ─────────────────────────────────
-sentence-transformers==5.1.0
+# ── Embeddings (Ultra-lightweight, no torch) ───────────────────────────────
+fastembed==0.5.1
 
 # ── Supabase (replaces aiosqlite + chromadb) ─────────────────────────────────
 supabase==2.15.2
