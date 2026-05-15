@@ -11,8 +11,8 @@ httpx==0.28.1
 fastapi==0.116.1
 uvicorn[standard]==0.35.0
 python-multipart==0.0.12
-pydantic==2.11.7
-pydantic-core==2.33.2
+pydantic>=2.0.0
+pydantic-core>=2.0.0
 
 # ── Environment ───────────────────────────────────────────────────────────────
 python-dotenv==1.1.1
