@@ -85,9 +85,9 @@ async def verify_api_key(api_key: str | None = Security(_api_key_header)):
 
 
 def _ui_info() -> dict:
-    version = (os.getenv("FRIDAY_UI_VERSION") or "v2.0 Sentinel").strip()
+    version = (os.getenv("FRIDAY_UI_VERSION") or "v2.1 Sentinel").strip()
     if not version:
-        version = "v2.0 Sentinel"
+        version = "v2.1 Sentinel"
     return {"version": version}
 
 

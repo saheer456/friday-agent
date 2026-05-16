@@ -91,19 +91,16 @@ echo [BUILD] Frontend build complete.
 echo.
 )
 
+cd frontend
 call npm run build
 if errorlevel 1 (
     echo [ERROR] Frontend build failed.
     pause
     exit /b 1
 )
-
 cd ..
 echo [BUILD] Frontend build complete.
 echo.
-```
-
-)
 
 :start_server
 

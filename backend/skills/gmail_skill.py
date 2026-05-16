@@ -72,7 +72,7 @@ class GmailSkill(BaseSkill):
             return SkillResult.fail(f"Gmail send failed: {e}")
 
     @skill_action(
-        description="Read recent emails from the inbox.",
+        description="Read recent emails from the inbox. Call this when the user asks to check mail, read emails, see inbox, or any email-related request. Returns real email data from the user's actual Gmail account.",
         params={
             "max_results": {"type": "integer", "description": "Max emails to return (default 5)."},
             "unread_only": {"type": "boolean", "description": "Only return unread emails (default true)."},

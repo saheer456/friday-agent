@@ -29,6 +29,30 @@ def _register_default_skills() -> None:
     if not skill_manager.get("terminal"):
         skill_manager.register(TerminalSkill())
 
+    # Utility skills (always available)
+    from .skills.weather_skill      import WeatherSkill
+    from .skills.web_search_skill   import WebSearchSkill
+    from .skills.clipboard_skill    import ClipboardSkill
+    from .skills.screenshot_skill   import ScreenshotSkill
+    from .skills.youtube_skill      import YouTubeSkill
+    from .skills.web_scrape_skill   import WebScrapeSkill
+    from .skills.app_launcher_skill import AppLauncherSkill
+
+    if not skill_manager.get("weather"):
+        skill_manager.register(WeatherSkill())
+    if not skill_manager.get("web_search"):
+        skill_manager.register(WebSearchSkill())
+    if not skill_manager.get("clipboard"):
+        skill_manager.register(ClipboardSkill())
+    if not skill_manager.get("screenshot"):
+        skill_manager.register(ScreenshotSkill())
+    if not skill_manager.get("youtube"):
+        skill_manager.register(YouTubeSkill())
+    if not skill_manager.get("web_scrape"):
+        skill_manager.register(WebScrapeSkill())
+    if not skill_manager.get("app_launcher"):
+        skill_manager.register(AppLauncherSkill())
+
     # Google Workspace skills (only if credentials exist)
     if is_google_configured():
         from .skills.gcalendar_skill import GCalendarSkill

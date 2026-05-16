@@ -11,9 +11,9 @@ OPENROUTER_API_KEY is set, otherwise Groq.
 import httpx
 import asyncio
 import json
-import re
 import os
 import threading
+import time
 from pathlib import Path
 
 _http_client = None
@@ -52,26 +52,23 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 CEREBRAS_URL = "https://api.cerebras.ai/v1/chat/completions"
 
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
-DEFAULT_OPENROUTER_MODEL = "google/gemini-2.0-flash-lite-preview-02-05:free"
-DEFAULT_CEREBRAS_MODEL = "llama-3.3-70b"
+DEFAULT_OPENROUTER_MODEL = "meta-llama/llama-3.1-8b-instruct:free"
+DEFAULT_CEREBRAS_MODEL = "llama3.1-8b"
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 
 def _llm_provider() -> str:
     explicit = os.getenv("FRIDAY_LLM_PROVIDER", "").strip().lower()
-    if explicit in ("groq", "openrouter", "cerebras"):
+    if explicit in ("groq", "cerebras"):
         return explicit
     gq = (os.getenv("GROQ_API_KEY") or "").strip()
-    or_k = (os.getenv("OPENROUTER_API_KEY") or "").strip()
     cr_k = (os.getenv("CEREBRAS_API_KEY") or "").strip()
-    
+
     if gq and "your_" not in gq.lower():
         return "groq"
     if cr_k and "your_" not in cr_k.lower():
         return "cerebras"
-    if or_k and "your_" not in or_k.lower():
-        return "openrouter"
     return "groq"
 
 
@@ -93,17 +90,17 @@ def _is_key_usable(key: str) -> bool:
 
 def _fallback_stream_configs(is_heavy: bool = False) -> list[tuple[str, str, str, str]]:
     """
-    Preferred provider first, then the alternate provider if configured.
+    Preferred provider first, then the fallback provider.
     If is_heavy=True, Cerebras is moved to the front.
     """
     primary = _llm_provider()
     order = [primary]
-    
-    potential = ["cerebras", "groq", "openrouter"]
+
+    potential = ["cerebras", "groq"]
     for p in potential:
         if p not in order:
             order.append(p)
-            
+
     if is_heavy and "cerebras" in order:
         order.remove("cerebras")
         order.insert(0, "cerebras")
@@ -116,11 +113,6 @@ def _fallback_stream_configs(is_heavy: bool = False) -> list[tuple[str, str, str
             model = (os.getenv("CEREBRAS_MODEL") or DEFAULT_CEREBRAS_MODEL).strip()
             if _is_key_usable(key):
                 configs.append((CEREBRAS_URL, key, model, "Cerebras"))
-        elif provider == "openrouter":
-            key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
-            model = (os.getenv("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL).strip()
-            if _is_key_usable(key):
-                configs.append((OPENROUTER_URL, key, model, "OpenRouter"))
         elif provider == "groq":
             key = (os.getenv("GROQ_API_KEY") or "").strip()
             model = (os.getenv("GROQ_MODEL") or DEFAULT_GROQ_MODEL).strip()
@@ -196,106 +188,39 @@ def _is_smalltalk(msg: str) -> bool:
     return False
 
 
-async def route_query(user_message: str) -> str:
-    """Route to the right tool based on message content."""
-    from . import tools, rag, search
-    msg = user_message.lower()
+async def _get_context(user_message: str) -> str:
+    """Retrieve memory + file intelligence context (passive, not tool-based)."""
+    from . import rag
 
-    # #5 Weather
-    if any(k in msg for k in ["weather", "forecast", "hot outside", "cold outside", "rain today"]):
-        print("Brain: → Weather")
-        res = await tools.get_weather()
-        return f"Current weather: {res.get('summary', 'Unavailable')}"
-
-    # #8 Daily briefing
-    if any(k in msg for k in ["good morning", "morning briefing", "briefing", "what's today", "what is today"]):
-        print("Brain: → Briefing")
-        res = await tools.daily_briefing()
-        return f"Daily briefing:\n{res.get('briefing','')}"
-
-    # #9 Tasks
-    if any(k in msg for k in ["my tasks", "my todos", "remind me", "what do i need to do", "pending tasks"]):
-        print("Brain: → Tasks")
-        res = await tools.list_tasks()
-        tasks = res.get("tasks", [])
-        if not tasks: return "You have no pending tasks."
-        return "Your tasks:\n" + "\n".join(f"- {t['task']}" for t in tasks)
-
-    # #10 Clipboard
-    if any(k in msg for k in ["clipboard", "just copied", "what did i copy", "what's in my clipboard"]):
-        print("Brain: → Clipboard")
-        res = tools.read_clipboard()
-        text = res.get("text", "")
-        return f"Clipboard content:\n{text}" if text else "Clipboard is empty."
-
-    # #2 Screenshot
-    if any(k in msg for k in ["screenshot", "what's on my screen", "what do you see", "describe my screen", "look at my screen"]):
-        print("Brain: → Screenshot")
-        res = await tools.take_screenshot()
-        return f"Screen content: {res.get('description', 'Could not analyse screen.')}"
-
-    # #3 Open apps — use APP_ALIASES from tools as single source of truth
-    if re.search(r"\b(open|launch|start|run)\s+", msg):
-        for alias in tools.APP_ALIASES:
-            if re.search(rf"\b{re.escape(alias)}\b", msg):
-                print(f"Brain: → Open {alias}")
-                tools.open_app(alias)
-                return f"Opening {alias} for you, sir."
-        # Check for URL
-        urls = re.findall(r"(https?://\S+)", user_message)
-        if urls:
-            tools.open_app(urls[0])
-            return f"Opening {urls[0]}"
-
-    # #7 YouTube ingestion
-    if "youtube.com" in msg or "youtu.be" in msg:
-        urls = re.findall(r"(https?://(?:www\.)?(?:youtube\.com|youtu\.be)\S+)", user_message)
-        if urls:
-            print("Brain: → YouTube ingest")
-            d = await tools.ingest_youtube(urls[0])
-            if d.get("status") == "success":
-                return f"Ingested {d.get('words',0)} words from the YouTube video into memory."
-            return f"YouTube ingestion failed: {d.get('error','unknown error')}"
-
-    # #11 URL ingestion
-    if any(k in msg for k in ["remember this page", "ingest this", "learn from", "read this url", "scrape"]):
-        urls = re.findall(r"(https?://\S+)", user_message)
-        if urls:
-            print(f"Brain: → URL ingest ({urls[0]})")
-            d = await tools.ingest_url(urls[0])
-            return f"Done. Ingested {d.get('words',0)} words from {urls[0]}."
-
-
+    parts = []
 
     # RAG personal data
-    if any(k in msg for k in ["my files", "my document", "my data", "what did i write",
-                               "in my notes", "what do i know", "what have i told you"]):
-        print("Brain: → RAG")
-        return f"Personal data context:\n{rag.search_personal_data(user_message)}"
-
-    # Web search
-    if any(k in msg for k in ["search", "look up", "who is", "latest news", "find me"]):
-        print("Brain: → Web Search")
-        query = re.sub(r"(search for|search|look up|find me)", "", user_message, flags=re.I).strip()
-        return f"Web search results:\n{await search.web_search(query)}"
+    try:
+        rag_result = rag.search_personal_data(user_message)
+        if rag_result and rag_result.strip():
+            parts.append(f"Personal data context:\n{rag_result}")
+    except Exception:
+        pass
 
     # File Intelligence — semantic search over uploaded documents
-    from .file_intelligence import search_files
-    file_hits = await search_files(user_message, limit=3)
-    if file_hits:
-        return "UPLOADED DOCUMENT CONTEXT:\n" + "\n\n---\n".join(file_hits)
+    try:
+        from .file_intelligence import search_files
+        file_hits = await search_files(user_message, limit=3)
+        if file_hits:
+            parts.append("UPLOADED DOCUMENT CONTEXT:\n" + "\n\n---\n".join(file_hits))
+    except Exception:
+        pass
 
-    # Native Tool Calling replaces the old _skill_router
-    return ""
+    return "\n\n".join(parts)
 
 async def _http_stream_error_snippet(resp: httpx.Response) -> str:
-    """Streaming responses must be read before .text / .json (httpx 0.28+)."""
+    """Try to read a response body for error details (streaming responses may already be closed)."""
     try:
-        await resp.aread()
-        t = (resp.text or "").replace("\n", " ")[:400]
-        return t if t else "(empty body)"
-    except Exception as ex:
-        return f"(could not read body: {ex})"
+        if not resp.is_closed:
+            await resp.aread()
+        return (resp.text or "").replace("\n", " ")[:300] or "(empty body)"
+    except Exception:
+        return "(body unavailable)"
 
 async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool):
     """
@@ -334,11 +259,11 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
         )
 
     try:
-        tool_context = await route_query(user_message)
+        passive_context = await _get_context(user_message)
         recalled = await MemoryManager.retrieve_context(user_message)
-        
+
         if recalled:
-            tool_context = f"{recalled}\n\n{tool_context}".strip()
+            passive_context = f"{recalled}\n\n{passive_context}".strip()
             if emit_phases:
                 yield (
                     "phase",
@@ -351,7 +276,7 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
     except Exception as e:
         import logging
         logging.error(f"[Brain] Context retrieval error: {e}")
-        tool_context = ""
+        passive_context = ""
 
     add_to_history("user", user_message)
 
@@ -361,7 +286,13 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
         "You are casual, supportive, occasionally funny, but always sharp and helpful. "
         "You speak naturally like a close friend who happens to be incredibly intelligent. "
         "No corporate stiffness — be real, be warm, be concise. Never break character.\n"
-        "CRITICAL: If you use tools, provide a brief, friendly status update in your final response about what was accomplished."
+        "CRITICAL: If you use tools, provide a brief, friendly status update in your final response about what was accomplished.\n"
+        "CRITICAL: NEVER fabricate, simulate, or make up data. If the user asks for real-time information "
+        "(emails, weather, search results, clipboard, etc.) you MUST call the appropriate tool. "
+        "Do NOT generate example or placeholder data. If a tool fails or is unavailable, tell the user honestly.\n"
+        "TOOLS: weather, web_search, clipboard, screenshot, youtube, web_scrape, app_launcher, code, terminal, "
+        "gmail (read_inbox, send_email), gcalendar, gdocs, gsheets.\n"
+        "IMPORTANT: NEVER say you don't have access to something without first trying the relevant tool."
     )
     _profile = _load_profile()
     if _profile:
@@ -387,8 +318,8 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
             "- Code examples: always wrap in ```language blocks\n"
             "- For conversational replies, plain prose is better than bullet lists"
         )
-    if tool_context:
-        system_content += f"\n\nCONTEXT:\n{tool_context}"
+    if passive_context:
+        system_content += f"\n\nCONTEXT:\n{passive_context}"
 
     messages = [{"role": "system", "content": system_content}, *conversation_history]
 
@@ -463,6 +394,7 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
             timeout = 120.0 if provider == "OpenRouter" else 30.0
             
             max_retries = 3
+            _abort_provider = False
             for retry_count in range(max_retries):
                 try:
                     client = _get_http_client()
@@ -477,6 +409,11 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
                                     break
                                 try:
                                     obj = json.loads(raw)
+                                    if "error" in obj:
+                                        err = obj["error"]
+                                        last_error = f"[Error: {provider}: {err.get('message', err)}]"
+                                        _abort_provider = True
+                                        break
                                     delta = (obj.get("choices") or [{}])[0].get("delta") or {}
                                     
                                     # Aggregate tool calls
@@ -500,9 +437,12 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
                                 except (json.JSONDecodeError, KeyError, IndexError, TypeError):
                                     continue
 
+                    if _abort_provider:
+                        break  # Break retry loop on error body from provider
                     if full_response or tool_calls_accumulator:
                         break  # Break out of the retry loop on success
-                    last_error = f"[Error: {provider} returned an empty response]"
+                    if not last_error:
+                        last_error = f"[Error: {provider} returned an empty response]"
                 except httpx.HTTPStatusError as e:
                     detail = await _http_stream_error_snippet(e.response)
                     last_error = f"[Error: {provider} API {e.response.status_code}: {detail}]"
@@ -535,10 +475,12 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
                 break # Break out of provider loop on success
 
         if last_error and not full_response and not tool_calls_accumulator:
-            # Add fallback assistant entry so history stays balanced (user turn always has a reply)
-            add_to_history("assistant", "[No response generated due to an error]")
-            yield ("error", last_error)
-            full_response = last_error
+            msg = "I encountered a temporary issue. Please try again."
+            add_to_history("assistant", msg)
+            if emit_phases:
+                yield ("phase", {"id": "fault", "title": "Subsystem fault", "detail": last_error})
+            yield ("error", msg)
+            full_response = msg
             break
 
         if tool_calls_accumulator:

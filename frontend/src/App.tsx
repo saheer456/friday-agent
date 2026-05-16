@@ -52,7 +52,7 @@ function App() {
     <div className={styles.layout}>
       <div className={styles.mainCol}>
         <Header
-          version={system?.ui?.version || 'v2.0 Sentinel'}
+          version={system?.ui?.version || 'v2.1 Sentinel'}
           statusText={statusText}
           isBusy={chatBusy}
           onClearChat={clearChat}
