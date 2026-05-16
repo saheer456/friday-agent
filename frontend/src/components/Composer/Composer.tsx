@@ -9,9 +9,10 @@ interface ComposerProps {
   onToggleRecord: () => void;
   onUpload: (file: File) => void;
   uploadState: { isUploading: boolean; toastMessage: { text: string; type: string } | null };
+  interimText?: string;
 }
 
-export function Composer({ onSend, isBusy, isRecording, onToggleRecord, onUpload, uploadState }: ComposerProps) {
+export function Composer({ onSend, isBusy, isRecording, onToggleRecord, onUpload, uploadState, interimText }: ComposerProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -77,7 +78,7 @@ export function Composer({ onSend, isBusy, isRecording, onToggleRecord, onUpload
           ref={inputRef}
           className={styles.textarea}
           rows={1}
-          placeholder="Message FRIDAY…"
+          placeholder={isRecording && interimText ? interimText : "Message FRIDAY…"}
           maxLength={16000}
           onChange={autoGrow}
           onKeyDown={handleKeyDown}

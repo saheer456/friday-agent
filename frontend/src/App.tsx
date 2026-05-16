@@ -3,6 +3,7 @@ import { Header } from './components/Header/Header';
 import { ChatArea } from './components/ChatArea/ChatArea';
 import { Composer } from './components/Composer/Composer';
 import { Telemetry } from './components/Telemetry/Telemetry';
+import { Memories } from './components/Memories/Memories';
 import { useSystem } from './hooks/useSystem';
 import { useChat } from './hooks/useChat';
 import { useVoice } from './hooks/useVoice';
@@ -12,6 +13,8 @@ import styles from './App.module.css';
 function App() {
   const [statusText, setStatusText] = useState('Online');
   const [telemetryOpen, setTelemetryOpen] = useState(false);
+  const [memoriesOpen, setMemoriesOpen] = useState(false);
+  const [interimText, setInterimText] = useState('');
 
   const { system, fetchSystem } = useSystem();
   const uploadState = useFileUpload();
@@ -22,7 +25,8 @@ function App() {
   }, [fetchSystem]);
 
   const { isRecording, isPlaying, toggleRecording, stopAudio, queueTTS } = useVoice(
-    (text) => handleSend(text, true)
+    (text) => { setInterimText(''); handleSend(text, true); },
+    (text) => setInterimText(text),
   );
 
   const { messages, phases, isBusy: chatBusy, sendMessage, clearChat, addSystemMessage } =
@@ -53,6 +57,7 @@ function App() {
           isBusy={chatBusy}
           onClearChat={clearChat}
           onToggleTelemetry={() => setTelemetryOpen(o => !o)}
+          onToggleMemories={() => setMemoriesOpen(o => !o)}
         />
 
         <ChatArea
@@ -72,11 +77,12 @@ function App() {
               isUploading: uploadState.isUploading,
               toastMessage: uploadState.toastMessage,
             }}
+            interimText={interimText}
           />
         </div>
 
         <footer className={styles.footer}>
-          Local · Same brain as CLI · Voice stack shown in telemetry
+          Local · Web Speech API · TTS via Kokoro/Edge
         </footer>
       </div>
 
@@ -85,6 +91,11 @@ function App() {
         phases={phases}
         isOpen={telemetryOpen}
         onClose={() => setTelemetryOpen(false)}
+      />
+
+      <Memories
+        isOpen={memoriesOpen}
+        onClose={() => setMemoriesOpen(false)}
       />
     </div>
   );

@@ -1,5 +1,5 @@
 import styles from './Header.module.css';
-import { Activity } from 'lucide-react';
+import { Activity, Database } from 'lucide-react';
 
 interface HeaderProps {
   version: string;
@@ -7,9 +7,10 @@ interface HeaderProps {
   isBusy: boolean;
   onClearChat: () => void;
   onToggleTelemetry: () => void;
+  onToggleMemories: () => void;
 }
 
-export function Header({ version, statusText, isBusy, onClearChat, onToggleTelemetry }: HeaderProps) {
+export function Header({ version, statusText, isBusy, onClearChat, onToggleTelemetry, onToggleMemories }: HeaderProps) {
   return (
     <header className={styles.header}>
       <div className={styles.logoRing}>
@@ -27,6 +28,14 @@ export function Header({ version, statusText, isBusy, onClearChat, onToggleTelem
         <span className={styles.statusText}>{statusText}</span>
         <button type="button" className={styles.btnClear} onClick={onClearChat}>
           Clear chat
+        </button>
+        <button
+          type="button"
+          className={styles.btnClear}
+          onClick={onToggleMemories}
+          aria-label="Toggle memories"
+        >
+          <Database size={18} />
         </button>
         {/* Mobile: telemetry toggle */}
         <button

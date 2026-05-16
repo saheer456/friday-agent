@@ -342,6 +342,103 @@ async def clear_history(_auth: None = Depends(verify_api_key)):
     return {"ok": True}
 
 
+class MemoryAddBody(BaseModel):
+    content: str = Field(..., min_length=1, max_length=4_000)
+    category: str = Field(default="manual", max_length=100)
+    importance: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
+@app.get("/api/memories")
+async def list_memories(
+    limit: int = 50,
+    offset: int = 0,
+    _auth: None = Depends(verify_api_key),
+):
+    from backend.memory import long_term
+    memories = await long_term.list_memories(limit=limit, offset=offset)
+    total = await long_term.count_memories()
+    return {"memories": memories, "total": total, "limit": limit, "offset": offset}
+
+
+@app.delete("/api/memories/{memory_id}")
+async def delete_memory(
+    memory_id: int,
+    _auth: None = Depends(verify_api_key),
+):
+    from backend.memory import long_term
+    ok = await long_term.delete_memory(memory_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {"ok": True}
+
+
+@app.post("/api/memories")
+async def add_memory(
+    body: MemoryAddBody,
+    _auth: None = Depends(verify_api_key),
+):
+    from backend.memory import long_term
+    from backend.memory.semantic_memory import vector_store
+    mem_id = await long_term.insert_memory(
+        content=body.content,
+        category=body.category,
+        importance=body.importance,
+    )
+    if mem_id > 0:
+        await vector_store.add_memory(
+            memory_id=mem_id,
+            text=body.content,
+            category=body.category,
+            importance=body.importance,
+        )
+    return {"id": mem_id, "ok": mem_id > 0}
+
+
+class STTBody(BaseModel):
+    pass
+
+
+@app.post("/api/stt")
+async def speech_to_text(
+    file: UploadFile = File(...),
+    _auth: None = Depends(verify_api_key),
+):
+    """Transcribe uploaded audio via faster-whisper (server-side STT fallback)."""
+    import tempfile
+    data = await file.read()
+    suffix = Path(file.filename or "audio.webm").suffix or ".webm"
+    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    path = tmp.name
+    tmp.close()
+    try:
+        with open(path, "wb") as f:
+            f.write(data)
+        from faster_whisper import WhisperModel
+        model = WhisperModel(
+            os.getenv("FRIDAY_WHISPER_MODEL", "small"),
+            device=os.getenv("FRIDAY_WHISPER_DEVICE", "cpu"),
+            compute_type=os.getenv("FRIDAY_WHISPER_COMPUTE", "int8"),
+        )
+        segs, _ = model.transcribe(
+            path,
+            language="en",
+            beam_size=1,
+            temperature=0.0,
+            vad_filter=True,
+        )
+        text = " ".join(s.text for s in segs).strip()
+        return {"text": text, "words": len(text.split()) if text else 0}
+    except ImportError:
+        raise HTTPException(status_code=501, detail="faster-whisper not installed")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"STT error: {e}")
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 class TTSBody(BaseModel):
     text: str = Field(..., min_length=1, max_length=4_000)
 
