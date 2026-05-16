@@ -403,8 +403,27 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
         )
 
     max_tool_rounds = 10
+    max_total_tool_calls = 15
+    max_tool_result_chars = 4000
+    turn_timeout = 60.0
+    turn_start = time.monotonic()
+
     executed_tool_calls = set()
+    tool_call_count = 0
+    consecutive_failures = 0
+    tool_name_counts: dict[str, int] = {}
+
     for round_num in range(max_tool_rounds):
+        if time.monotonic() - turn_start > turn_timeout:
+            msg = "[System] Tool execution timed out. Provide your best answer."
+            yield ("error", msg)
+            yield ("text", "I'm sorry, that took too long. Here's what I know:")
+            if full_response:
+                add_to_history("assistant", full_response)
+            else:
+                add_to_history("assistant", "[Response timed out during tool execution]")
+            break
+
         tools_payload = tool_bridge.get_tools_payload()
         
         full_response = ""
@@ -549,11 +568,30 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
                 tc_id = tc["id"]
                 fn_name = tc["function"]["name"]
                 fn_args = tc["function"]["arguments"]
-                
-                # Prevent infinite loops: check if we've already run this exact call in this turn
+
+                tool_call_count += 1
+                if tool_call_count > max_total_tool_calls:
+                    print(f"Brain: Tool call limit reached ({max_total_tool_calls}). Forcing final answer.")
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": "Error: Too many tool calls in this turn. Stop calling tools and provide your final answer.",
+                    })
+                    continue
+
+                tool_name_counts[fn_name] = tool_name_counts.get(fn_name, 0) + 1
+                if tool_name_counts[fn_name] > 3:
+                    print(f"Brain: Loop detected — {fn_name} called {tool_name_counts[fn_name]} times.")
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": f"Error: You've called {fn_name} too many times in this turn. Stop and provide your final answer.",
+                    })
+                    continue
+
                 call_sig = f"{fn_name}({fn_args})"
                 if call_sig in executed_tool_calls:
-                    print(f"Brain: Loop detected for {call_sig}. Breaking.")
+                    print(f"Brain: Exact loop detected for {call_sig}. Breaking.")
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc_id,
@@ -562,9 +600,39 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
                     continue
                 executed_tool_calls.add(call_sig)
 
+                try:
+                    json.loads(fn_args) if isinstance(fn_args, str) else fn_args
+                except (json.JSONDecodeError, TypeError):
+                    print(f"Brain: Invalid JSON args for {fn_name}.")
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": f"Error: Invalid JSON arguments for {fn_name}. Provide valid parameters.",
+                    })
+                    consecutive_failures += 1
+                    continue
+
                 print(f"Brain: Native tool call → {fn_name}({fn_args})")
                 res_str = await tool_bridge.handle_tool_call_async(fn_name, fn_args)
-                
+
+                if len(res_str) > max_tool_result_chars:
+                    res_str = res_str[:max_tool_result_chars] + "\n\n... [output truncated]"
+
+                is_failure = res_str.startswith("[Error:") or '"status": "failed"' in res_str
+                if is_failure:
+                    consecutive_failures += 1
+                else:
+                    consecutive_failures = 0
+
+                if consecutive_failures >= 3:
+                    print(f"Brain: {consecutive_failures} consecutive tool failures. Forcing final answer.")
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": "Error: Multiple tool calls failed. Stop calling tools and provide a direct answer.",
+                    })
+                    continue
+
                 tool_msg = {
                     "role": "tool",
                     "tool_call_id": tc_id,
