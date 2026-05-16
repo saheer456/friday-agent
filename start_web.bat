@@ -72,12 +72,23 @@ if not exist "frontend\dist\index.html" (
 echo [BUILD] Frontend dist missing — building...
 cd frontend
 
-```
 call npm install
 if errorlevel 1 (
     echo [ERROR] npm install failed.
     pause
     exit /b 1
+)
+
+call npm run build
+if errorlevel 1 (
+    echo [ERROR] Frontend build failed.
+    pause
+    exit /b 1
+)
+
+cd ..
+echo [BUILD] Frontend build complete.
+echo.
 )
 
 call npm run build
@@ -111,10 +122,10 @@ REM ─────────────────────────�
 REM Run server
 REM ─────────────────────────────────────────────────────────────
 
-python -X faulthandler -X dev -m uvicorn web.server:app ^
+python -X faulthandler -m uvicorn web.server:app ^
     --host 127.0.0.1 ^
     --port 8080 ^
-    --log-level trace
+    --log-level info
 
 REM ─────────────────────────────────────────────────────────────
 REM Exit handling

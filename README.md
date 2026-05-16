@@ -9,13 +9,15 @@
 
 ---
 
-**FRIDAY** is a fully local, voice-first AI assistant powered by Groq's ultra-fast LLM API. It listens, thinks, speaks back, remembers context, searches the web, reads your screen, manages files, and runs entirely in your terminal.
+**FRIDAY** is a fully local, voice-first AI assistant powered by Groq's ultra-fast LLM API. It listens, thinks, speaks back, remembers context, searches the web, reads your screen, manages files, and runs via a web UI.
 
 ## ✨ Features
 
 | # | Feature | How |
 |---|---------|-----|
-| 1 | **Streaming AI chat** | Groq (llama-3.3-70b) direct to terminal |
+| # | Feature | How |
+|---|---------|-----|
+| 1 | **Streaming AI chat** | Groq (llama-3.3-70b) via web UI |
 | 2 | **Screenshot + Vision** | Groq Llama-4-Scout multimodal |
 | 3 | **Open apps / URLs** | `subprocess` + webbrowser |
 | 4 | **RAG personal memory** | LangChain + ChromaDB + HuggingFace embeddings |
@@ -26,7 +28,7 @@
 | 9 | **Task tracker** | Markdown-based task detection |
 | 10 | **Clipboard reader** | `pyperclip` |
 | 11 | **URL scraper** | `readability-lxml` + BeautifulSoup |
-| 12 | **Always-on VAD** | WebRTC VAD + faster-whisper (Whisper Small) |
+| 12 | **Browser voice input** | Web Speech API |
 | 13 | **Neural TTS** | Kokoro ONNX (local) → edge-tts fallback |
 
 ## 🚀 Quick Start
@@ -71,37 +73,44 @@ voices-v1.0.bin
 
 Then set `TTS_BACKEND=kokoro` in `.env`. Without Kokoro, FRIDAY uses Microsoft Edge TTS (online) fallback.
 
-### 4. Run FRIDAY
+### 4. Run FRIDAY (Web UI)
 
 ```bash
 # From the friday/ directory:
-python cli.py
+start_web.bat        # Windows — builds frontend + starts server
+# or
+start.bat            # Windows — quick start (server only, assumes frontend already built)
 ```
+
+Then open **http://127.0.0.1:8080** in your browser.
 
 ## 📁 Project Structure
 
 ```
-friday-agent/
-├── friday/                     # Main application package
-│   ├── backend/
-│   │   ├── __init__.py
-│   │   ├── brain.py            # Groq LLM + routing + memory
-│   │   ├── rag.py              # LangChain + ChromaDB ingestion & retrieval
-│   │   ├── voice_in.py         # Always-on VAD + faster-whisper STT
-│   │   ├── tts.py              # Kokoro / edge-tts synthesis
-│   │   ├── search.py           # DuckDuckGo web search
-│   │   ├── scraper.py          # URL content scraper
-│   │   ├── tools.py            # Local capability tools (weather, etc)
-│   │   └── memory.py           # mem0 wrapper for long-term memory
-│   ├── data/                   # Your personal documents (gitignored)
-│   │   └── profile.txt         # Boss profile — always injected in context
-│   ├── vectorstore/            # ChromaDB store (gitignored, auto-generated)
-│   ├── requirements.txt
-│   ├── cli.py                  # CLI mode
-│   └── .env.example
-├── .gitignore
-├── LICENSE
-└── README.md
+friday/
+├── backend/                    # Python backend
+│   ├── __init__.py
+│   ├── brain.py                # Groq LLM + routing + memory + tool calling
+│   ├── rag.py                  # LangChain + ChromaDB ingestion & retrieval
+│   ├── tts.py                  # Kokoro / edge-tts synthesis
+│   ├── search.py               # DuckDuckGo web search
+│   ├── scraper.py              # URL content scraper
+│   ├── tools.py                # Local capability tools (weather, apps, etc.)
+│   ├── memory/                 # Long-term + short-term memory system
+│   ├── skills/                 # Tool-calling skills framework
+│   ├── file_intelligence.py    # File upload RAG pipeline
+│   └── tool_bridge.py          # LLM tool call dispatcher
+├── web/
+│   ├── server.py               # FastAPI server (SSE streaming, file upload, TTS)
+│   ├── static/                 # Legacy static frontend
+│   └── __init__.py
+├── frontend/                   # React 19 + TypeScript + Vite UI
+├── data/                       # Personal documents (gitignored)
+├── vectorstore/                # ChromaDB store (gitignored, auto-generated)
+├── start_web.bat               # Full startup: builds frontend + starts server
+├── start.bat                   # Quick start (server only)
+├── requirements.txt
+└── .env.example
 ```
 
 ## ⚙️ Environment Variables
@@ -121,14 +130,14 @@ See [`.env.example`](friday/.env.example) for all options.
 ## 🏗️ Architecture
 
 ```
-Terminal (cli.py) ──→ LLM Engine (brain.py)
-        │                      │
-        │             ┌────────┼────────────┐
-        ▼             ▼        ▼            ▼
-   voice_in.py    Groq LLM  ChromaDB      Tools
-   (VAD + STT)            (rag/memory)  (weather/apps)
-        │
-   tts.py ──→ Terminal Audio Player
+Browser (React) ──→ FastAPI (web/server.py) ──→ LLM Engine (brain.py)
+                                                      │
+                                             ┌────────┼────────────┐
+                                             ▼        ▼            ▼
+                                         Groq LLM  ChromaDB      Tools
+                                                   (rag/memory)  (weather/apps)
+                                                      │
+                                                 tts.py ──→ Audio
 ```
 
 ## 📦 Dependencies
@@ -137,7 +146,7 @@ Key packages — see [`requirements.txt`](friday/requirements.txt) for the full 
 
 - **LLM**: `groq`, `httpx`
 - **RAG**: `langchain`, `langchain-chroma`, `sentence-transformers`, `chromadb`
-- **STT**: `faster-whisper`, `webrtcvad-wheels`, `pyaudio`
+- **STT**: Browser Web Speech API (frontend) / `faster-whisper` (optional)
 - **TTS**: `kokoro-onnx`, `edge-tts`, `pygame`, `soundfile`
 - **Tools**: `duckduckgo-search`, `beautifulsoup4`, `pillow`, `pyperclip`
 

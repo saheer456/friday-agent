@@ -1,5 +1,5 @@
 """
-FRIDAY web server — FastAPI + SSE streaming chat (same brain as CLI).
+FRIDAY web server — FastAPI + SSE streaming chat.
 Run from repo root: python -m uvicorn web.server:app --host 127.0.0.1 --port 8080
 """
 
@@ -90,14 +90,6 @@ def _ui_info() -> dict:
         version = "v2.0 Sentinel"
     return {"version": version}
 
-
-app = FastAPI(title="FRIDAY Web", version="1.0")
-
-print("[BOOT] FastAPI app created")
-
-REACT_DIST_DIR = ROOT / "frontend" / "dist"
-
-ASSETS_DIR = REACT_DIST_DIR / "assets"
 
 # ───────────────────────────────────────────────────────────────
 # Lifespan (replaces deprecated @app.on_event("startup"))
