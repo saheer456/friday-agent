@@ -10,9 +10,10 @@ interface ComposerProps {
   onUpload: (file: File) => void;
   uploadState: { isUploading: boolean; toastMessage: { text: string; type: string } | null };
   interimText?: string;
+  allowUpload?: boolean;
 }
 
-export function Composer({ onSend, isBusy, isRecording, onToggleRecord, onUpload, uploadState, interimText }: ComposerProps) {
+export function Composer({ onSend, isBusy, isRecording, onToggleRecord, onUpload, uploadState, interimText, allowUpload = true }: ComposerProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -57,22 +58,26 @@ export function Composer({ onSend, isBusy, isRecording, onToggleRecord, onUpload
       <form className={styles.composer} onSubmit={handleSubmit} autoComplete="off">
         <div className={styles.inputGlow}></div>
         
-        <input 
-          type="file" 
-          ref={fileInputRef} 
-          accept=".pdf,.docx,.txt,.md,.csv,.json" 
-          hidden 
-          onChange={handleFileChange}
-        />
-        
-        <button 
-          type="button" 
-          className={`${styles.btn} ${styles.upload} ${uploadState.isUploading ? styles.uploading : ''}`}
-          onClick={() => fileInputRef.current?.click()}
-          title="Attach a file"
-        >
-          <Paperclip size={18} />
-        </button>
+        {allowUpload && (
+          <>
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept=".pdf,.docx,.txt,.md,.csv,.json"
+              hidden
+              onChange={handleFileChange}
+            />
+
+            <button
+              type="button"
+              className={`${styles.btn} ${styles.upload} ${uploadState.isUploading ? styles.uploading : ''}`}
+              onClick={() => fileInputRef.current?.click()}
+              title="Attach a file"
+            >
+              <Paperclip size={18} />
+            </button>
+          </>
+        )}
 
         <textarea
           ref={inputRef}

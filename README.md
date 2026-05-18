@@ -83,6 +83,27 @@ start.bat            # Windows — quick start (server only, assumes frontend al
 
 Then open **http://127.0.0.1:8080** in your browser.
 
+### 5. (Recommended) Enable Supabase Login Before Sharing
+
+If you're sending the project to recruiters/testers, enable Supabase JWT auth:
+
+```bash
+FRIDAY_SUPABASE_AUTH_ENABLED=1
+FRIDAY_FULL_ACCESS_EMAILS=khansaheer424@gmail.com
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_ANON_KEY=your_supabase_anon_key
+
+# Frontend env (Vite)
+VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
+
+With this enabled, the frontend signs users in via Supabase Auth, then sends Supabase JWT bearer tokens to backend APIs.
+
+Access levels:
+- Emails in `FRIDAY_FULL_ACCESS_EMAILS` get the full assistant.
+- Other signed-in users get basic demo chat, weather, and browser-local memory only.
+
 ## 📁 Project Structure
 
 ```

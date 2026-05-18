@@ -1,5 +1,5 @@
 import styles from './Header.module.css';
-import { Activity, Database } from 'lucide-react';
+import { Activity, Database, LogOut } from 'lucide-react';
 
 interface HeaderProps {
   version: string;
@@ -8,9 +8,11 @@ interface HeaderProps {
   onClearChat: () => void;
   onToggleTelemetry: () => void;
   onToggleMemories: () => void;
+  onLogout: () => void;
+  fullAccess?: boolean;
 }
 
-export function Header({ version, statusText, isBusy, onClearChat, onToggleTelemetry, onToggleMemories }: HeaderProps) {
+export function Header({ version, statusText, isBusy, onClearChat, onToggleTelemetry, onToggleMemories, onLogout, fullAccess = true }: HeaderProps) {
   return (
     <header className={styles.header}>
       <div className={styles.logoRing}>
@@ -29,22 +31,35 @@ export function Header({ version, statusText, isBusy, onClearChat, onToggleTelem
         <button type="button" className={styles.btnClear} onClick={onClearChat}>
           Clear chat
         </button>
-        <button
-          type="button"
-          className={styles.btnClear}
-          onClick={onToggleMemories}
-          aria-label="Toggle memories"
-        >
-          <Database size={18} />
-        </button>
+        {fullAccess && (
+          <button
+            type="button"
+            className={styles.btnClear}
+            onClick={onToggleMemories}
+            aria-label="Toggle memories"
+          >
+            <Database size={18} />
+          </button>
+        )}
         {/* Mobile: telemetry toggle */}
+        {fullAccess && (
+          <button
+            type="button"
+            className={styles.btnTelemetry}
+            onClick={onToggleTelemetry}
+            aria-label="Toggle telemetry"
+          >
+            <Activity size={18} />
+          </button>
+        )}
         <button
           type="button"
-          className={styles.btnTelemetry}
-          onClick={onToggleTelemetry}
-          aria-label="Toggle telemetry"
+          className={styles.btnIcon}
+          onClick={onLogout}
+          aria-label="Log out"
+          title="Log out"
         >
-          <Activity size={18} />
+          <LogOut size={18} />
         </button>
       </div>
     </header>

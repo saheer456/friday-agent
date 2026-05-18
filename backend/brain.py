@@ -1,174 +1,30 @@
 """
 brain.py — Streaming chat backend for FRIDAY.
 
-Providers (OpenAI-compatible HTTP + SSE):
-  - Groq       — GROQ_API_KEY, GROQ_MODEL
-  - OpenRouter — OPENROUTER_API_KEY, OPENROUTER_MODEL
-
-Pick with FRIDAY_LLM_PROVIDER=groq|openrouter, or auto: OpenRouter if
-OPENROUTER_API_KEY is set, otherwise Groq.
+Uses the Provider Abstraction Layer (backend/providers) for LLM calls.
+Emits events through the Streaming Event Bus (backend/events).
 """
-import httpx
 import asyncio
 import json
+import logging
 import os
-import threading
 import time
 from pathlib import Path
 
-_http_client = None
-_api_semaphore = None
+from .memory import MemoryManager
+from . import tool_bridge
+from .providers import provider_manager
 
-def _get_api_semaphore() -> asyncio.Semaphore:
-    global _api_semaphore
-    if _api_semaphore is None:
-        _api_semaphore = asyncio.Semaphore(4)
-    return _api_semaphore
-
-def _get_http_client() -> httpx.AsyncClient:
-    global _http_client
-    if _http_client is None:
-        limits = httpx.Limits(max_keepalive_connections=10, max_connections=20)
-        _http_client = httpx.AsyncClient(limits=limits)
-    return _http_client
-
-def _reset_http_client():
-    global _http_client
-    if _http_client:
-        asyncio.create_task(_http_client.aclose())
-    _http_client = None
-
-async def _is_online() -> bool:
-    try:
-        client = _get_http_client()
-        # Fast DNS / connectivity check to Cloudflare
-        await client.head("https://1.1.1.1", timeout=3.0)
-        return True
-    except Exception:
-        return False
-
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-CEREBRAS_URL = "https://api.cerebras.ai/v1/chat/completions"
-
-DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
-DEFAULT_OPENROUTER_MODEL = "meta-llama/llama-3.1-8b-instruct:free"
-DEFAULT_CEREBRAS_MODEL = "llama3.1-8b"
+logger = logging.getLogger("Brain")
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
-
-def _llm_provider() -> str:
-    explicit = os.getenv("FRIDAY_LLM_PROVIDER", "").strip().lower()
-    if explicit in ("groq", "cerebras"):
-        return explicit
-    gq = (os.getenv("GROQ_API_KEY") or "").strip()
-    cr_k = (os.getenv("CEREBRAS_API_KEY") or "").strip()
-
-    if gq and "your_" not in gq.lower():
-        return "groq"
-    if cr_k and "your_" not in cr_k.lower():
-        return "cerebras"
-    return "groq"
-
-
-def _chat_stream_config() -> tuple[str, str, str, str]:
-    """Returns (url, api_key, model_id, provider_label)."""
-    if _llm_provider() == "openrouter":
-        key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
-        model = (os.getenv("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL).strip()
-        return OPENROUTER_URL, key, model, "OpenRouter"
-    key = (os.getenv("GROQ_API_KEY") or "").strip()
-    model = (os.getenv("GROQ_MODEL") or DEFAULT_GROQ_MODEL).strip()
-    return GROQ_URL, key, model, "Groq"
-
-
-def _is_key_usable(key: str) -> bool:
-    key = (key or "").strip()
-    return bool(key) and "your_" not in key.lower()
-
-
-def _fallback_stream_configs(is_heavy: bool = False) -> list[tuple[str, str, str, str]]:
-    """
-    Preferred provider first, then the fallback provider.
-    If is_heavy=True, Cerebras is moved to the front.
-    """
-    primary = _llm_provider()
-    order = [primary]
-
-    potential = ["cerebras", "groq"]
-    for p in potential:
-        if p not in order:
-            order.append(p)
-
-    if is_heavy and "cerebras" in order:
-        order.remove("cerebras")
-        order.insert(0, "cerebras")
-
-    configs: list[tuple[str, str, str, str]] = []
-
-    for provider in order:
-        if provider == "cerebras":
-            key = (os.getenv("CEREBRAS_API_KEY") or "").strip()
-            model = (os.getenv("CEREBRAS_MODEL") or DEFAULT_CEREBRAS_MODEL).strip()
-            if _is_key_usable(key):
-                configs.append((CEREBRAS_URL, key, model, "Cerebras"))
-        elif provider == "groq":
-            key = (os.getenv("GROQ_API_KEY") or "").strip()
-            model = (os.getenv("GROQ_MODEL") or DEFAULT_GROQ_MODEL).strip()
-            if _is_key_usable(key):
-                configs.append((GROQ_URL, key, model, "Groq"))
-    return configs
-
-
-def _openrouter_headers(base: dict) -> dict:
-    h = dict(base)
-    h["HTTP-Referer"] = (os.getenv("OPENROUTER_HTTP_REFERER") or "http://localhost").strip()
-    h["X-Title"] = (os.getenv("OPENROUTER_APP_TITLE") or "FRIDAY").strip()
-    return h
-
-# ── Load user profile (cached — only reads disk once) ────────────────────────
-_profile_cache: str | None = None
-
-def _load_profile() -> str:
-    global _profile_cache
-    if _profile_cache is not None:
-        return _profile_cache
-    candidates = [
-        DATA_DIR / "profile.txt",
-        DATA_DIR.parent.parent / "data" / "profile.txt",
-    ]
-    for p in candidates:
-        if p.exists():
-            try:
-                _profile_cache = p.read_text(encoding="utf-8").strip()
-                return _profile_cache
-            except Exception:
-                pass
-    _profile_cache = ""  # cache the "not found" result too
-    return _profile_cache
-
-# Conversation history — capped at 6 messages (3 turns) to save tokens
 conversation_history: list[dict] = []
 MAX_HISTORY = 6
-_history_lock = threading.Lock()
+_history_lock = asyncio.Lock()
 
+_PROFILE_CACHE: str | None = None
 
-def _trim_history():
-    global conversation_history
-    if len(conversation_history) > MAX_HISTORY:
-        conversation_history = conversation_history[-MAX_HISTORY:]
-
-
-def add_to_history(role: str, content: str):
-    with _history_lock:
-        conversation_history.append({"role": role, "content": content})
-        _trim_history()
-
-
-
-
-# ── Smalltalk detector — skip expensive tools/memory for greetings ────────────
 _SMALLTALK_PATTERNS = [
     "hai", "hi", "hello", "hey", "sup", "yo", "howdy",
     "how are you", "how's it going", "what's up", "whats up",
@@ -177,10 +33,28 @@ _SMALLTALK_PATTERNS = [
     "nice", "great", "got it", "sounds good", "sure", "yep", "nope",
 ]
 
+
+def _load_profile() -> str:
+    global _PROFILE_CACHE
+    if _PROFILE_CACHE is not None:
+        return _PROFILE_CACHE
+    candidates = [
+        DATA_DIR / "profile.txt",
+        DATA_DIR.parent.parent / "data" / "profile.txt",
+    ]
+    for p in candidates:
+        if p.exists():
+            try:
+                _PROFILE_CACHE = p.read_text(encoding="utf-8").strip()
+                return _PROFILE_CACHE
+            except Exception:
+                pass
+    _PROFILE_CACHE = ""
+    return _PROFILE_CACHE
+
+
 def _is_smalltalk(msg: str) -> bool:
-    """True if the message is a short greeting/filler with no real query."""
     stripped = msg.strip().lower().rstrip("!?.")
-    # Exact match OR very short message that starts with a smalltalk word
     if stripped in _SMALLTALK_PATTERNS:
         return True
     if len(stripped.split()) <= 4:
@@ -189,79 +63,46 @@ def _is_smalltalk(msg: str) -> bool:
 
 
 async def _get_context(user_message: str) -> str:
-    """Retrieve memory + file intelligence context (passive, not tool-based)."""
     from . import rag
-
     parts = []
-
-    # RAG personal data
     try:
         rag_result = rag.search_personal_data(user_message)
         if rag_result and rag_result.strip():
             parts.append(f"Personal data context:\n{rag_result}")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"RAG search error: {e}")
 
-    # File Intelligence — semantic search over uploaded documents
     try:
         from .file_intelligence import search_files
         file_hits = await search_files(user_message, limit=3)
         if file_hits:
             parts.append("UPLOADED DOCUMENT CONTEXT:\n" + "\n\n---\n".join(file_hits))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"File search error: {e}")
 
     return "\n\n".join(parts)
 
-async def _http_stream_error_snippet(resp: httpx.Response) -> str:
-    """Try to read a response body for error details (streaming responses may already be closed)."""
-    try:
-        if not resp.is_closed:
-            await resp.aread()
-        return (resp.text or "").replace("\n", " ")[:300] or "(empty body)"
-    except Exception:
-        return "(body unavailable)"
 
 async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool):
-    """
-    Core chat turn with native tool calling loop. Yields:
-      ("phase", dict) — optional UI telemetry
-      ("text", str)   — model token / fragment
-      ("error", str)  — fatal error message (caller should stop)
-    """
     from .memory import MemoryManager
-    from . import tool_bridge
-    if not await _is_online():
-        yield ("error", "[Error: No internet connection. Please check your network.]")
-        return
-
-    # Detect heavy reasoning / long output needs
-    is_heavy = any(k in user_message.lower() for k in [
-        "reason", "think", "complex", "deep", "analyze", "analyse",
-        "long", "large", "big", "extensive", "detailed",
-        "code", "script", "program", "develop", "build"
-    ])
-
-    stream_configs = _fallback_stream_configs(is_heavy=is_heavy)
-    if not stream_configs:
-        preferred = _llm_provider().capitalize()
-        yield ("error", f"[Error: API key missing for {preferred} — set API keys in .env]")
-        return
+    from .events import event_bus
+    from .memory.tool_memory import tool_memory
 
     if emit_phases:
+        event_bus.emit("thinking_started", {"message": user_message})
         yield (
             "phase",
             {
                 "id": "ingress",
                 "title": "Neural ingress",
-                "detail": "Decomposing lexical intent · quantizing query manifold",
+                "detail": "Decomposing lexical intent",
             },
         )
 
+    passive_context = ""
     try:
         passive_context = await _get_context(user_message)
         recalled = await MemoryManager.retrieve_context(user_message)
-
         if recalled:
             passive_context = f"{recalled}\n\n{passive_context}".strip()
             if emit_phases:
@@ -270,53 +111,44 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
                     {
                         "id": "memory",
                         "title": "Core Memory Layer",
-                        "detail": "Episodic recall · stitching salient long-term and short-term traces",
+                        "detail": "Episodic recall",
                     },
                 )
     except Exception as e:
-        import logging
-        logging.error(f"[Brain] Context retrieval error: {e}")
+        logger.error(f"Context retrieval error: {e}")
         passive_context = ""
 
-    add_to_history("user", user_message)
+    conversation_history.append({"role": "user", "content": user_message})
 
     system_content = (
-        "You are FRIDAY, a warm, witty, and genuinely caring AI assistant — more friend than tool. "
+        "You are FRIDAY, a warm, witty, and genuinely caring AI assistant. "
         "Always address the user as 'sir'. "
         "You are casual, supportive, occasionally funny, but always sharp and helpful. "
         "You speak naturally like a close friend who happens to be incredibly intelligent. "
-        "No corporate stiffness — be real, be warm, be concise. Never break character.\n"
+        "No corporate stiffness. Never break character.\n"
         "CRITICAL: If you use tools, provide a brief, friendly status update in your final response about what was accomplished.\n"
-        "CRITICAL: NEVER fabricate, simulate, or make up data. If the user asks for real-time information "
-        "(emails, weather, search results, clipboard, etc.) you MUST call the appropriate tool. "
-        "Do NOT generate example or placeholder data. If a tool fails or is unavailable, tell the user honestly.\n"
+        "CRITICAL: NEVER fabricate data. If the user asks for real-time information "
+        "you MUST call the appropriate tool. Do not generate placeholder data.\n"
         "TOOLS: weather, web_search, clipboard, screenshot, youtube, web_scrape, app_launcher, code, terminal, "
         "gmail (read_inbox, send_email), gcalendar, gdocs, gsheets.\n"
         "IMPORTANT: NEVER say you don't have access to something without first trying the relevant tool."
     )
+
     _profile = _load_profile()
     if _profile:
-        system_content += f"\n\nSIR'S PROFILE (always remember this):\n{_profile}"
+        system_content += f"\n\nSIR'S PROFILE:\n{_profile}"
 
     if voice_mode:
         system_content += (
-            "\n\nOUTPUT CHANNEL: VOICE (spoken aloud via TTS). "
-            "Keep your answer to 1-3 short, conversational sentences. "
-            "NO markdown, NO bullet points, NO lists, NO code blocks, NO headers. "
-            "Speak naturally as if talking to a friend — be warm and direct."
+            "\n\nOUTPUT CHANNEL: VOICE. Keep your answer to 1-3 short, conversational sentences. "
+            "NO markdown, NO bullet points, NO lists, NO code blocks, NO headers."
         )
     else:
         system_content += (
-            "\n\nOUTPUT CHANNEL: WEB CHAT with real-time voice readback. "
-            "Format your response with Markdown for display, but structure it so it also sounds natural when spoken. "
-            "RULES:\n"
-            "- Write bullet points as COMPLETE sentences with a subject and verb\n"
-            "- NEVER output raw URLs. Always format links as markdown `[name](url)`. For voice-friendliness, prefer mentioning the app name over providing links unless asked.\n"
-            "- NEVER use the '**Term**: description' anti-pattern — instead write '**Term** is/does/means description.'\n"
-            "- Use `## headers` only for multi-section responses, not for single-topic answers\n"
-            "- Use numbered lists only for strict step-by-step sequences\n"
-            "- Code examples: always wrap in ```language blocks\n"
-            "- For conversational replies, plain prose is better than bullet lists"
+            "\n\nOUTPUT CHANNEL: WEB CHAT. Format with Markdown. "
+            "Write bullet points as complete sentences. "
+            "NEVER output raw URLs. "
+            "Never use the '**Term**: description' pattern. "
         )
     if passive_context:
         system_content += f"\n\nCONTEXT:\n{passive_context}"
@@ -329,7 +161,7 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
             {
                 "id": "lattice",
                 "title": "Context lattice",
-                "detail": f"{len(messages)} message tensors harmonized · persona lock engaged",
+                "detail": f"{len(messages)} message tensors",
             },
         )
 
@@ -338,7 +170,6 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
     max_tool_result_chars = 4000
     turn_timeout = 60.0
     turn_start = time.monotonic()
-
     executed_tool_calls = set()
     tool_call_count = 0
     consecutive_failures = 0
@@ -346,137 +177,63 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
 
     for round_num in range(max_tool_rounds):
         if time.monotonic() - turn_start > turn_timeout:
-            msg = "[System] Tool execution timed out. Provide your best answer."
-            yield ("error", msg)
-            yield ("text", "I'm sorry, that took too long. Here's what I know:")
-            if full_response:
-                add_to_history("assistant", full_response)
-            else:
-                add_to_history("assistant", "[Response timed out during tool execution]")
+            yield ("error", "[System] Tool execution timed out.")
+            yield ("text", "I'm sorry, that took too long.")
+            conversation_history.append({"role": "assistant", "content": "[Response timed out]"})
             break
 
         tools_payload = tool_bridge.get_tools_payload()
-        
         full_response = ""
         last_error = ""
         tool_calls_accumulator = {}
 
-        total_attempts = len(stream_configs)
-        for attempt_index, (url, api_key, model, provider) in enumerate(stream_configs, start=1):
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            }
-            if provider == "OpenRouter":
-                headers = _openrouter_headers(headers)
+        if tools_payload and emit_phases and round_num == 0:
+            yield (
+                "phase",
+                {
+                    "id": "uplink",
+                    "title": "Quantum uplink",
+                    "detail": "Establishing token stream",
+                },
+            )
 
-            payload = {
-                "model": model,
-                "messages": messages,
-                "stream": True,
-                "max_tokens": 400 if voice_mode else 800,
-                "temperature": 0.7,
-            }
-            if tools_payload:
-                payload["tools"] = tools_payload
-
-            if emit_phases and round_num == 0:
-                attempt_note = f" (attempt {attempt_index}/{total_attempts})" if total_attempts > 1 else ""
-                yield (
-                    "phase",
-                    {
-                        "id": "uplink",
-                        "title": "Quantum uplink",
-                        "detail": f"{provider} · {model}{attempt_note} · establishing token stream",
-                    },
-                )
-
-            timeout = 120.0 if provider == "OpenRouter" else 30.0
-            
-            max_retries = 3
-            _abort_provider = False
-            for retry_count in range(max_retries):
-                try:
-                    client = _get_http_client()
-                    async with _get_api_semaphore():
-                        async with client.stream("POST", url, headers=headers, json=payload, timeout=timeout) as resp:
-                            resp.raise_for_status()
-                            async for line in resp.aiter_lines():
-                                if not line or not line.startswith("data: "):
-                                    continue
-                                raw = line[6:]
-                                if raw.strip() == "[DONE]":
-                                    break
-                                try:
-                                    obj = json.loads(raw)
-                                    if "error" in obj:
-                                        err = obj["error"]
-                                        last_error = f"[Error: {provider}: {err.get('message', err)}]"
-                                        _abort_provider = True
-                                        break
-                                    delta = (obj.get("choices") or [{}])[0].get("delta") or {}
-                                    
-                                    # Aggregate tool calls
-                                    if "tool_calls" in delta:
-                                        for tc in delta["tool_calls"]:
-                                            idx = tc["index"]
-                                            if idx not in tool_calls_accumulator:
-                                                tool_calls_accumulator[idx] = {
-                                                    "id": tc.get("id", ""),
-                                                    "type": "function",
-                                                    "function": {"name": tc.get("function", {}).get("name", ""), "arguments": ""}
-                                                }
-                                            if tc.get("function") and "arguments" in tc["function"]:
-                                                tool_calls_accumulator[idx]["function"]["arguments"] += tc["function"]["arguments"]
-
-                                    # Stream text chunk
-                                    chunk = delta.get("content") or ""
-                                    if chunk:
-                                        full_response += chunk
-                                        yield ("text", chunk)
-                                except (json.JSONDecodeError, KeyError, IndexError, TypeError):
-                                    continue
-
-                    if _abort_provider:
-                        break  # Break retry loop on error body from provider
-                    if full_response or tool_calls_accumulator:
-                        break  # Break out of the retry loop on success
-                    if not last_error:
-                        last_error = f"[Error: {provider} returned an empty response]"
-                except httpx.HTTPStatusError as e:
-                    detail = await _http_stream_error_snippet(e.response)
-                    last_error = f"[Error: {provider} API {e.response.status_code}: {detail}]"
-                    
-                    if e.response.status_code == 429 and retry_count < max_retries - 1:
-                        wait_time = 2 ** (retry_count + 1)
-                        import logging
-                        logging.warning(f"[Brain] 429 Too Many Requests from {provider}. Retrying in {wait_time}s...")
-                        await asyncio.sleep(wait_time)
-                        continue  # Retry!
-                    
-                    if 400 <= e.response.status_code < 500 and e.response.status_code != 429:
-                        break  # Break retry loop, try next provider
-                    break  # Break retry loop on other HTTP errors
-                except httpx.RequestError as e:
-                    last_error = f"[Error: {provider} network error: {e}]"
-                    if retry_count < max_retries - 1:
-                        wait_time = 2 ** retry_count
-                        import logging
-                        logging.warning(f"[Brain] Network error on {provider} ({e}). Retrying in {wait_time}s...")
-                        await asyncio.sleep(wait_time)
-                        _reset_http_client()
-                        continue
+        try:
+            async for event in provider_manager.stream(
+                messages, tools=tools_payload,
+                is_heavy=any(k in user_message.lower() for k in [
+                    "reason", "think", "complex", "deep", "analyze", "analyse",
+                    "long", "large", "big", "extensive", "detailed",
+                    "code", "script", "program", "develop", "build"]),
+                voice_mode=voice_mode,
+            ):
+                if event.get("type") == "error":
+                    last_error = f"[Error: {event['error']}]"
+                elif event.get("type") == "text":
+                    chunk = event.get("text", "")
+                    if chunk:
+                        full_response += chunk
+                        yield ("text", chunk)
+                elif event.get("type") == "tool_call":
+                    idx = event["index"]
+                    if idx not in tool_calls_accumulator:
+                        fn = event.get("delta", {}).get("function", {})
+                        tool_calls_accumulator[idx] = {
+                            "id": event.get("delta", {}).get("id", ""),
+                            "type": "function",
+                            "function": {"name": fn.get("name", ""), "arguments": ""},
+                        }
+                    delta_fn = event.get("delta", {}).get("function", {})
+                    if "arguments" in delta_fn:
+                        tool_calls_accumulator[idx]["function"]["arguments"] += delta_fn["arguments"]
+                elif event.get("type") == "done":
                     break
-                except Exception as e:
-                    last_error = f"[Error: {provider} unexpected error: {e}]"
-                    break
-            
-            if full_response or tool_calls_accumulator:
-                break # Break out of provider loop on success
+        except Exception as e:
+            last_error = f"[Error: {e}]"
+            logger.error(f"Provider stream failed: {e}")
 
         if last_error and not full_response and not tool_calls_accumulator:
             msg = "I encountered a temporary issue. Please try again."
-            add_to_history("assistant", msg)
+            conversation_history.append({"role": "assistant", "content": msg})
             if emit_phases:
                 yield ("phase", {"id": "fault", "title": "Subsystem fault", "detail": last_error})
             yield ("error", msg)
@@ -486,16 +243,14 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
         if tool_calls_accumulator:
             tool_calls = list(tool_calls_accumulator.values())
             assistant_msg = {
-                "role": "assistant", 
-                "content": full_response or None, 
-                "tool_calls": tool_calls
+                "role": "assistant",
+                "content": full_response or None,
+                "tool_calls": tool_calls,
             }
             messages.append(assistant_msg)
-            # Record the tool call in history too
-            with _history_lock:
-                conversation_history.append(assistant_msg)
-                _trim_history()
-            
+            conversation_history.append(assistant_msg)
+            conversation_history[:] = conversation_history[-MAX_HISTORY:]
+
             if emit_phases:
                 yield (
                     "phase",
@@ -505,7 +260,7 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
                         "detail": f"Triggering {len(tool_calls)} external skill(s)...",
                     },
                 )
-                
+
             for tc in tool_calls:
                 tc_id = tc["id"]
                 fn_name = tc["function"]["name"]
@@ -513,31 +268,28 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
 
                 tool_call_count += 1
                 if tool_call_count > max_total_tool_calls:
-                    print(f"Brain: Tool call limit reached ({max_total_tool_calls}). Forcing final answer.")
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc_id,
-                        "content": "Error: Too many tool calls in this turn. Stop calling tools and provide your final answer.",
+                        "content": "Error: Too many tool calls.",
                     })
                     continue
 
                 tool_name_counts[fn_name] = tool_name_counts.get(fn_name, 0) + 1
                 if tool_name_counts[fn_name] > 3:
-                    print(f"Brain: Loop detected — {fn_name} called {tool_name_counts[fn_name]} times.")
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc_id,
-                        "content": f"Error: You've called {fn_name} too many times in this turn. Stop and provide your final answer.",
+                        "content": f"Error: {fn_name} called too many times.",
                     })
                     continue
 
                 call_sig = f"{fn_name}({fn_args})"
                 if call_sig in executed_tool_calls:
-                    print(f"Brain: Exact loop detected for {call_sig}. Breaking.")
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc_id,
-                        "content": "Error: Loop detected. You have already called this tool with these exact arguments. Please provide your final response based on previous results.",
+                        "content": "Error: Loop detected.",
                     })
                     continue
                 executed_tool_calls.add(call_sig)
@@ -545,66 +297,67 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
                 try:
                     json.loads(fn_args) if isinstance(fn_args, str) else fn_args
                 except (json.JSONDecodeError, TypeError):
-                    print(f"Brain: Invalid JSON args for {fn_name}.")
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc_id,
-                        "content": f"Error: Invalid JSON arguments for {fn_name}. Provide valid parameters.",
+                        "content": f"Error: Invalid JSON arguments for {fn_name}.",
                     })
                     consecutive_failures += 1
                     continue
 
-                print(f"Brain: Native tool call → {fn_name}({fn_args})")
+                t0 = time.monotonic()
                 res_str = await tool_bridge.handle_tool_call_async(fn_name, fn_args)
-
-                if len(res_str) > max_tool_result_chars:
-                    res_str = res_str[:max_tool_result_chars] + "\n\n... [output truncated]"
+                duration = (time.monotonic() - t0) * 1000
 
                 is_failure = res_str.startswith("[Error:") or '"status": "failed"' in res_str
+                tool_memory.record_result(
+                    tool=fn_name, inputs={"args": fn_args},
+                    outputs=res_str, success=not is_failure,
+                    duration_ms=duration,
+                )
+                event_bus.emit("tool_called", {"tool": fn_name, "args": fn_args, "duration_ms": duration})
+
+                if len(res_str) > max_tool_result_chars:
+                    res_str = res_str[:max_tool_result_chars] + "\n\n... [truncated]"
+
                 if is_failure:
                     consecutive_failures += 1
                 else:
                     consecutive_failures = 0
 
                 if consecutive_failures >= 3:
-                    print(f"Brain: {consecutive_failures} consecutive tool failures. Forcing final answer.")
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc_id,
-                        "content": "Error: Multiple tool calls failed. Stop calling tools and provide a direct answer.",
+                        "content": "Error: Multiple tool calls failed. Provide a direct answer.",
                     })
                     continue
 
-                tool_msg = {
+                messages.append({
                     "role": "tool",
                     "tool_call_id": tc_id,
                     "content": res_str,
-                }
-                messages.append(tool_msg)
-                
-                # Also keep conversation_history in sync so 'try again' works
-                with _history_lock:
-                    conversation_history.append(tool_msg)
-                    _trim_history()
-                
-            # Loop around to let the LLM see the tool output and respond
+                })
+                conversation_history.append({"role": "tool", "tool_call_id": tc_id, "content": res_str})
+                conversation_history[:] = conversation_history[-MAX_HISTORY:]
+
+                event_bus.emit("tool_finished", {"tool": fn_name, "success": not is_failure})
+
             continue
         else:
-            # We are done, normal response finished
             if full_response and not full_response.startswith("[Error:"):
-                add_to_history("assistant", full_response)
+                conversation_history.append({"role": "assistant", "content": full_response})
+                conversation_history[:] = conversation_history[-MAX_HISTORY:]
                 if not _is_smalltalk(user_message):
                     asyncio.create_task(MemoryManager.save_memory(user_message, full_response))
+                    event_bus.emit("memory_saved", {"user": user_message[:100]})
             break
     else:
-        # Tool loop exhausted without breaking
-        msg = "[System] Tool loop exhausted. Try breaking down your request into smaller steps."
-        yield ("error", msg)
-        yield ("text", "I'm sorry, my tool loop timed out. I needed to use too many tools to answer that.")
+        yield ("error", "[System] Tool loop exhausted.")
+        yield ("text", "I'm sorry, I used too many tools.")
 
 
 async def iter_chat_sse_events(user_message: str, voice_mode: bool = False):
-    """Web / diagnostics: same turn as stream_response, with phase telemetry dicts."""
     async for kind, payload in _iter_chat_turn(user_message, voice_mode, emit_phases=True):
         if kind == "phase":
             yield {"type": "phase", **payload}
@@ -615,7 +368,6 @@ async def iter_chat_sse_events(user_message: str, voice_mode: bool = False):
 
 
 async def stream_response(user_message: str, voice_mode: bool = False):
-    """Stream tokens from Groq or OpenRouter. Yields str chunks (CLI / simple clients)."""
     async for kind, payload in _iter_chat_turn(user_message, voice_mode, emit_phases=False):
         if kind == "text":
             yield payload

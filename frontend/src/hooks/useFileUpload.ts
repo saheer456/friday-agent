@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { authFetch } from '../lib/api';
 
 export function useFileUpload() {
   const [isUploading, setIsUploading] = useState(false);
@@ -31,7 +32,7 @@ export function useFileUpload() {
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch('/api/upload', { method: 'POST', body: fd });
+      const res = await authFetch('/api/upload', { method: 'POST', body: fd });
       const data = await res.json();
 
       if (!res.ok) {

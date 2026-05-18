@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { SystemInfo } from '../types/api';
+import { authFetch } from '../lib/api';
 
 export function useSystem() {
   const [system, setSystem] = useState<SystemInfo | null>(null);
@@ -7,7 +8,7 @@ export function useSystem() {
 
   const fetchSystem = useCallback(async () => {
     try {
-      const res = await fetch('/api/system');
+      const res = await authFetch('/api/system');
       if (!res.ok) throw new Error('Failed to fetch system info');
       const data = await res.json();
       setSystem(data);

@@ -1,12 +1,11 @@
 """
 backend/__init__.py
-Makes the backend directory a Python package, enabling relative imports.
+FRIDAY backend package — modular AI agent platform.
 """
 import logging
 import sys
 from pathlib import Path
 
-# Setup global logging
 log_file = Path(__file__).resolve().parent.parent / "logs" / "friday.log"
 log_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -16,8 +15,16 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-class StreamToLogger(object):
-    """Fake file-like stream object that redirects writes to a logger and the original stream."""
+
+class StructuredLogger:
+    def __init__(self, name: str):
+        self._logger = logging.getLogger(name)
+
+    def log(self, event: str, **data):
+        self._logger.info("event=%s %s", event, " ".join(f"{k}={v}" for k, v in data.items()))
+
+
+class StreamToLogger:
     def __init__(self, logger, log_level=logging.INFO, original_stream=None):
         self.logger = logger
         self.log_level = log_level
@@ -40,6 +47,6 @@ class StreamToLogger(object):
     def isatty(self):
         return False
 
-# Redirect stdout and stderr, keeping original streams so console still works
+
 sys.stdout = StreamToLogger(logging.getLogger('STDOUT'), logging.INFO, sys.stdout)
 sys.stderr = StreamToLogger(logging.getLogger('STDERR'), logging.ERROR, sys.stderr)

@@ -1,10 +1,21 @@
 import { useState, useCallback } from 'react';
 import type { Message, Phase } from '../types/api';
+import { authFetch } from '../lib/api';
+import { clearLocalMemory, retrieveLocalMemory, saveLocalMemory } from '../lib/localMemory';
 
-export function useChat(onStatusChange: (status: string, busy: boolean) => void, queueTTS: (text: string) => void) {
+interface UseChatOptions {
+  limitedMode?: boolean;
+}
+
+export function useChat(
+  onStatusChange: (status: string, busy: boolean) => void,
+  queueTTS: (text: string) => void,
+  options: UseChatOptions = {},
+) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [phases, setPhases] = useState<Phase[]>([]);
   const [isBusy, setIsBusy] = useState(false);
+  const { limitedMode = false } = options;
 
   const addSystemMessage = useCallback((text: string) => {
     setMessages(prev => [...prev, { id: Date.now().toString(), role: 'assistant', content: text, streaming: false }]);
@@ -12,11 +23,17 @@ export function useChat(onStatusChange: (status: string, busy: boolean) => void,
 
   const clearChat = useCallback(async () => {
     try {
-      await fetch('/api/clear', { method: 'POST' });
+      if (limitedMode) {
+        clearLocalMemory();
+      } else {
+        await authFetch('/api/clear', { method: 'POST' });
+      }
       setMessages([{
         id: Date.now().toString(),
         role: 'assistant',
-        content: 'Session cleared, sir.\nAsk anything when ready.',
+        content: limitedMode
+          ? 'Local demo memory cleared.\nAsk anything when ready.'
+          : 'Session cleared, sir.\nAsk anything when ready.',
         streaming: false,
       }]);
       setPhases([]);
@@ -24,7 +41,7 @@ export function useChat(onStatusChange: (status: string, busy: boolean) => void,
     } catch {
       onStatusChange('Clear failed', false);
     }
-  }, [onStatusChange]);
+  }, [limitedMode, onStatusChange]);
 
   const sendMessage = useCallback(async (text: string, isVoiceMode: boolean) => {
     if (!text.trim()) return;
@@ -44,10 +61,14 @@ export function useChat(onStatusChange: (status: string, busy: boolean) => void,
     onStatusChange('Neural pipeline…', true);
 
     try {
-      const res = await fetch('/api/chat/stream', {
+      const endpoint = limitedMode ? '/api/chat/limited/stream' : '/api/chat/stream';
+      const payload = limitedMode
+        ? { message: text, local_context: retrieveLocalMemory(text) }
+        : { message: text, voice_mode: isVoiceMode };
+      const res = await authFetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, voice_mode: isVoiceMode }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) throw new Error((await res.text()) || res.statusText);
@@ -83,7 +104,10 @@ export function useChat(onStatusChange: (status: string, busy: boolean) => void,
             setMessages(prev =>
               prev.map(m => m.id === aiMsgId ? { ...m, streaming: false, content: finalText } : m)
             );
-            if (finalText.trim()) queueTTS(finalText);
+            if (finalText.trim()) {
+              if (limitedMode) saveLocalMemory(text, finalText);
+              else queueTTS(finalText);
+            }
             break outer;
           }
 
@@ -134,7 +158,7 @@ export function useChat(onStatusChange: (status: string, busy: boolean) => void,
       setIsBusy(false);
       onStatusChange('Online', false);
     }
-  }, [onStatusChange, queueTTS]);
+  }, [limitedMode, onStatusChange, queueTTS]);
 
   return { messages, phases, isBusy, sendMessage, clearChat, addSystemMessage };
 }

@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { authFetch } from '../lib/api';
 
 declare global {
   interface Window {
@@ -109,7 +110,7 @@ export function useVoice(
     speakAbortRef.current = ctrl;
 
     try {
-      const r = await fetch('/api/speak', {
+      const r = await authFetch('/api/speak', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: fullText }),

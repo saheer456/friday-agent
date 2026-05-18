@@ -6,6 +6,81 @@
   position: relative;
 }
 
+.authShell {
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.authCard {
+  width: min(420px, 92vw);
+  padding: 24px;
+  border: 1px solid var(--outline);
+  border-radius: 14px;
+  background: var(--bg1);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.authTitle {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.authText {
+  margin: 0 0 8px;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+}
+
+.authInput {
+  width: 100%;
+  border: 1px solid var(--outline);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--bg2);
+  color: var(--text);
+}
+
+.authButton {
+  display: inline-block;
+  text-decoration: none;
+  text-align: center;
+  border: 1px solid var(--outline);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.authLinkButton {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px 4px;
+  font-size: 0.88rem;
+}
+
+.authError {
+  margin: 2px 0;
+  color: #ff7b7b;
+  font-size: 0.88rem;
+}
+
+.authNotice {
+  margin: 2px 0;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
 .mainCol {
   flex-grow: 1;
   display: flex;
@@ -17,6 +92,14 @@
 .composerWrap {
   padding: 0 32px 24px;
   background: var(--bg);
+}
+
+.limitedBanner {
+  padding: 9px 32px;
+  border-bottom: 1px solid var(--outline);
+  background: var(--amber-dim);
+  color: var(--text-muted);
+  font-size: 0.82rem;
 }
 
 .footer {
@@ -35,6 +118,11 @@
 @media (max-width: 768px) {
   .composerWrap {
     padding: 0 12px 16px;
+  }
+
+  .limitedBanner {
+    padding: 8px 16px;
+    font-size: 0.76rem;
   }
 
   .footer {

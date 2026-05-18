@@ -32,8 +32,9 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.security.api_key import APIKeyHeader
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
+import httpx
 
 from backend import brain
 
@@ -52,11 +53,16 @@ def _voice_stack_info() -> dict:
 
 
 def _llm_stack_info() -> dict:
-    url, _key, model, provider = brain._chat_stream_config()
+    from backend.providers import provider_manager
+    providers = provider_manager._providers if hasattr(provider_manager, '_providers') else {}
+    provider_name = next(iter(provider_manager._fallback_order), "unknown") if provider_manager._fallback_order else "unknown"
+    provider = provider_manager.get(provider_name)
+    model = provider.config.model if provider else "unknown"
+    host = provider.config.base_url.split("/")[2] if provider and "://" in provider.config.base_url else "unknown"
     return {
-        "llm_provider": provider,
+        "llm_provider": provider_name,
         "llm_model": model,
-        "llm_url_host": url.split("/")[2] if "://" in url else url,
+        "llm_url_host": host,
     }
 
 
@@ -69,19 +75,58 @@ def _readiness_info() -> dict:
     }
 
 
-# ── API Key authentication ─────────────────────────────────────────────────────
-# If FRIDAY_API_KEY is set in env, all sensitive endpoints require
-# the header:  X-API-Key: <value>
-# If NOT set, all requests are allowed (local dev mode).
-# ───────────────────────────────────────────────────────────────
-_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+_bearer = HTTPBearer(auto_error=False)
 
-async def verify_api_key(api_key: str | None = Security(_api_key_header)):
-    required = os.getenv("FRIDAY_API_KEY", "").strip()
-    if not required:
-        return   # local dev — no key required
-    if api_key != required:
-        raise HTTPException(status_code=403, detail="Invalid or missing API key.")
+
+def _supabase_auth_enabled() -> bool:
+    return (os.getenv("FRIDAY_SUPABASE_AUTH_ENABLED", "0").strip() in {"1", "true", "yes", "on"})
+
+
+def _full_access_emails() -> set[str]:
+    configured = (os.getenv("FRIDAY_FULL_ACCESS_EMAILS") or "khansaheer424@gmail.com").strip()
+    return {email.strip().lower() for email in configured.split(",") if email.strip()}
+
+
+def _has_full_access(user: dict) -> bool:
+    email = (user.get("email") or "").strip().lower()
+    return bool(email) and email in _full_access_emails()
+
+
+async def _verify_supabase_token(token: str) -> dict:
+    base_url = (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
+    anon_key = (os.getenv("SUPABASE_ANON_KEY") or "").strip()
+    service_key = (os.getenv("SUPABASE_KEY") or "").strip()
+    api_key = anon_key or service_key
+    if not base_url or not api_key:
+        raise HTTPException(status_code=500, detail="Supabase auth is enabled but not configured.")
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        resp = await client.get(
+            f"{base_url}/auth/v1/user",
+            headers={
+                "apikey": api_key,
+                "Authorization": f"Bearer {token}",
+            },
+        )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=401, detail="Invalid or expired token.")
+    return resp.json()
+
+
+async def verify_user_auth(credentials: HTTPAuthorizationCredentials | None = Security(_bearer)):
+    if not _supabase_auth_enabled():
+        return {"auth_disabled": True}
+    if credentials is None or credentials.scheme.lower() != "bearer" or not credentials.credentials:
+        raise HTTPException(status_code=401, detail="Missing bearer token.")
+    return await _verify_supabase_token(credentials.credentials)
+
+
+async def verify_auth(credentials: HTTPAuthorizationCredentials | None = Security(_bearer)):
+    user = await verify_user_auth(credentials)
+    if user.get("auth_disabled"):
+        return user
+    if not _has_full_access(user):
+        raise HTTPException(status_code=403, detail="Full access is limited. Contact the owner to get full access.")
+    return user
 
 
 def _ui_info() -> dict:
@@ -129,16 +174,25 @@ async def lifespan(app: FastAPI):
         print("[STARTUP] TTS warmup failed")
         traceback.print_exc()
 
+    # Task queue
+    try:
+        from backend.tasks import task_queue
+        task_queue.start()
+        print("[STARTUP] ✓ Task queue started")
+    except Exception:
+        print("[STARTUP] Task queue start failed")
+        traceback.print_exc()
+
     print("[STARTUP] Startup sequence complete")
 
     yield  # ← server is running
 
     # ─ Shutdown cleanup ─
-    print("[SHUTDOWN] Closing HTTP client...")
+    print("[SHUTDOWN] Cleanup...")
     try:
-        from backend.brain import _get_http_client
-        await _get_http_client().aclose()
-        print("[SHUTDOWN] ✓ HTTP client closed")
+        from backend.tasks import task_queue
+        await task_queue.stop()
+        print("[SHUTDOWN] ✓ Task queue stopped")
     except Exception:
         pass
 
@@ -161,7 +215,7 @@ app.add_middleware(
     allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Content-Type", "Authorization", "X-API-Key"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 REACT_DIST_DIR = ROOT / "frontend" / "dist"
@@ -238,6 +292,30 @@ class ChatBody(BaseModel):
     voice_mode: bool = False
 
 
+class LimitedChatBody(BaseModel):
+    message: str = Field(..., min_length=1, max_length=4_000)
+    local_context: str = Field(default="", max_length=6_000)
+
+
+@app.get("/api/auth/me")
+async def auth_me(credentials: HTTPAuthorizationCredentials | None = Security(_bearer)):
+    if not _supabase_auth_enabled():
+        return {"login_enabled": False, "authenticated": True, "user": None}
+    if credentials is None or credentials.scheme.lower() != "bearer" or not credentials.credentials:
+        return {"login_enabled": True, "authenticated": False, "user": None}
+    try:
+        user = await _verify_supabase_token(credentials.credentials)
+    except HTTPException:
+        return {"login_enabled": True, "authenticated": False, "user": None}
+    return {
+        "login_enabled": True,
+        "authenticated": True,
+        "full_access": _has_full_access(user),
+        "contact_email": "khansaheer424@gmail.com",
+        "user": user,
+    }
+
+
 @app.get("/")
 async def index():
     dist_index = ROOT / "frontend" / "dist" / "index.html"
@@ -274,7 +352,7 @@ async def system_info():
 
 
 @app.post("/api/chat/stream")
-async def chat_stream(body: ChatBody, _auth: None = Depends(verify_api_key)):
+async def chat_stream(body: ChatBody, _auth: dict = Depends(verify_auth)):
     """SSE: phase + token + error events, then `[DONE]`."""
 
     def _friendly_error(raw: str) -> str:
@@ -311,8 +389,63 @@ async def chat_stream(body: ChatBody, _auth: None = Depends(verify_api_key)):
     )
 
 
+@app.post("/api/chat/limited/stream")
+async def limited_chat_stream(body: LimitedChatBody, _auth: dict = Depends(verify_user_auth)):
+    """Limited demo chat: no backend memory, no powerful tools, browser context only."""
+    from backend import tools
+    from backend.providers import provider_manager
+
+    async def event_gen():
+        try:
+            msg = body.message.strip()
+            lowered = msg.lower()
+            if any(word in lowered for word in ["weather", "temperature", "forecast"]):
+                yield f"data: {json.dumps({'type': 'phase', 'id': 'weather', 'title': 'Weather', 'detail': 'Checking current conditions'}, ensure_ascii=False)}\n\n"
+                weather = await tools.get_weather()
+                text = weather.get("summary") if isinstance(weather, dict) else None
+                if not text:
+                    text = "Weather is unavailable right now."
+                yield f"data: {json.dumps({'type': 'token', 'text': text}, ensure_ascii=False)}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+            system = (
+                "You are FRIDAY in limited demo mode. Be helpful, concise, and honest. "
+                "You do not have access to terminal, files, screenshots, email, calendar, upload ingestion, "
+                "or server-side memory. Use only the user's message and the browser-local memory context. "
+                "If asked for unavailable tools, explain that full access is limited and suggest contacting the owner."
+            )
+            if body.local_context.strip():
+                system += f"\n\nBROWSER-LOCAL MEMORY CONTEXT:\n{body.local_context.strip()}"
+
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": msg},
+            ]
+            yield f"data: {json.dumps({'type': 'phase', 'id': 'limited', 'title': 'Limited chat', 'detail': 'Using browser-local context'}, ensure_ascii=False)}\n\n"
+            async for ev in provider_manager.stream(messages, tools=[], is_heavy=False, voice_mode=False):
+                if ev.get("type") == "text":
+                    yield f"data: {json.dumps({'type': 'token', 'text': ev.get('text', '')}, ensure_ascii=False)}\n\n"
+                elif ev.get("type") == "error":
+                    yield f"data: {json.dumps({'type': 'error', 'message': ev.get('error', 'Limited chat failed')}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...), _auth: None = Depends(verify_api_key)):
+async def upload_file(file: UploadFile = File(...), _auth: dict = Depends(verify_auth)):
     """Ingest a file into FRIDAY's semantic knowledge base."""
     from backend.file_intelligence import ingest_file
 
@@ -337,7 +470,7 @@ async def upload_file(file: UploadFile = File(...), _auth: None = Depends(verify
 
 
 @app.post("/api/clear")
-async def clear_history(_auth: None = Depends(verify_api_key)):
+async def clear_history(_auth: dict = Depends(verify_auth)):
     brain.conversation_history.clear()
     return {"ok": True}
 
@@ -352,7 +485,7 @@ class MemoryAddBody(BaseModel):
 async def list_memories(
     limit: int = 50,
     offset: int = 0,
-    _auth: None = Depends(verify_api_key),
+    _auth: dict = Depends(verify_auth),
 ):
     from backend.memory import long_term
     memories = await long_term.list_memories(limit=limit, offset=offset)
@@ -363,7 +496,7 @@ async def list_memories(
 @app.delete("/api/memories/{memory_id}")
 async def delete_memory(
     memory_id: int,
-    _auth: None = Depends(verify_api_key),
+    _auth: dict = Depends(verify_auth),
 ):
     from backend.memory import long_term
     ok = await long_term.delete_memory(memory_id)
@@ -375,7 +508,7 @@ async def delete_memory(
 @app.post("/api/memories")
 async def add_memory(
     body: MemoryAddBody,
-    _auth: None = Depends(verify_api_key),
+    _auth: dict = Depends(verify_auth),
 ):
     from backend.memory import long_term
     from backend.memory.semantic_memory import vector_store
@@ -401,7 +534,7 @@ class STTBody(BaseModel):
 @app.post("/api/stt")
 async def speech_to_text(
     file: UploadFile = File(...),
-    _auth: None = Depends(verify_api_key),
+    _auth: dict = Depends(verify_auth),
 ):
     """Transcribe uploaded audio via faster-whisper (server-side STT fallback)."""
     import tempfile
@@ -444,7 +577,7 @@ class TTSBody(BaseModel):
 
 
 @app.post("/api/tts")
-async def tts_endpoint(body: TTSBody, _auth: None = Depends(verify_api_key)):
+async def tts_endpoint(body: TTSBody, _auth: dict = Depends(verify_auth)):
     """Synthesize text → audio via the backend TTS pipeline (edge-tts / Kokoro).
     Returns MP3 or WAV bytes for the browser to play natively.
     """
@@ -465,7 +598,7 @@ async def tts_endpoint(body: TTSBody, _auth: None = Depends(verify_api_key)):
 
 
 @app.post("/api/speak")
-async def speak_endpoint(body: TTSBody, _auth: None = Depends(verify_api_key)):
+async def speak_endpoint(body: TTSBody, _auth: dict = Depends(verify_auth)):
     """Convert Markdown → natural spoken prose via LLM, then synthesize.
     Uses llama-3.1-8b-instant (fast, cheap) to rewrite the text naturally
     before passing to TTS. Far better quality than regex-based cleaning.
@@ -526,7 +659,7 @@ async def speak_endpoint(body: TTSBody, _auth: None = Depends(verify_api_key)):
 
 
 @app.post("/api/chat")
-async def chat_once(body: ChatBody):
+async def chat_once(body: ChatBody, _auth: dict = Depends(verify_auth)):
     """Non-streaming fallback (full reply as JSON)."""
     parts: list[str] = []
     try:

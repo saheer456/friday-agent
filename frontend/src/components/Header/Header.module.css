@@ -115,6 +115,24 @@
   color: #b91c1c;
 }
 
+.btnIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--outline);
+  color: var(--text-muted);
+  background: transparent;
+  transition: all 0.18s ease;
+}
+.btnIcon:hover {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #b91c1c;
+}
+
 /* ── Telemetry toggle button (mobile only) ─── */
 .btnTelemetry {
   display: none;
@@ -173,5 +191,10 @@
 
   .btnTelemetry {
     display: flex;
+  }
+
+  .btnIcon {
+    width: 34px;
+    height: 34px;
   }
 }

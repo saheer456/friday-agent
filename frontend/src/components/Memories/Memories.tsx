@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Trash2, Database, RefreshCw } from 'lucide-react';
 import styles from './Memories.module.css';
+import { authFetch } from '../../lib/api';
 
 interface Memory {
   id: number;
@@ -23,7 +24,7 @@ export function Memories({ isOpen, onClose }: MemoriesProps) {
   const fetchMemories = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch('/api/memories?limit=100');
+      const r = await authFetch('/api/memories?limit=100');
       const data = await r.json();
       setMemories(data.memories || []);
       setTotal(data.total || 0);
@@ -40,7 +41,7 @@ export function Memories({ isOpen, onClose }: MemoriesProps) {
 
   const handleDelete = async (id: number) => {
     try {
-      await fetch(`/api/memories/${id}`, { method: 'DELETE' });
+      await authFetch(`/api/memories/${id}`, { method: 'DELETE' });
       setMemories(prev => prev.filter(m => m.id !== id));
       setTotal(prev => prev - 1);
     } catch {}
