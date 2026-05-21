@@ -405,8 +405,22 @@ async def limited_chat_stream(body: LimitedChatBody, _auth: dict = Depends(verif
             msg = body.message.strip()
             lowered = msg.lower()
             if any(word in lowered for word in ["weather", "temperature", "forecast"]):
-                yield f"data: {json.dumps({'type': 'phase', 'id': 'weather', 'title': 'Weather', 'detail': 'Checking current conditions'}, ensure_ascii=False)}\n\n"
-                weather = await tools.get_weather()
+                yield f"data: {json.dumps({'type': 'phase', 'id': 'weather', 'title': 'Weather', 'detail': 'Checking conditions'}, ensure_ascii=False)}\n\n"
+                location = None
+                try:
+                    extract_prompt = [
+                        {"role": "system", "content": "You are a location extraction assistant. Extract the city/location name from the user's weather query. If no city/location is specified, output 'DEFAULT'. Respond with ONLY the city/location name or 'DEFAULT' (no other text, no punctuation, lowercase)."},
+                        {"role": "user", "content": msg}
+                    ]
+                    resp = await provider_manager.generate(messages=extract_prompt)
+                    if resp and resp.content:
+                        extracted = resp.content.strip().strip("'\"`").strip()
+                        if extracted and extracted.upper() != "DEFAULT":
+                            location = extracted
+                except Exception as e:
+                    print(f"[ERROR] Location extraction failed: {e}")
+
+                weather = await tools.get_weather(location=location)
                 text = weather.get("summary") if isinstance(weather, dict) else None
                 if not text:
                     text = "Weather is unavailable right now."

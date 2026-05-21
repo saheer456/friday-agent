@@ -44,9 +44,67 @@ APP_ALIASES = {
     "spotify":"spotify", "discord":"discord", "slack":"slack",
 }
 
-async def get_weather(lat: float = None, lon: float = None) -> dict:
+def get_profile_location() -> Optional[str]:
+    import json
+    from pathlib import Path
+    try:
+        base_dir = Path(__file__).resolve().parent.parent
+        p_path = base_dir / "data" / "profile.txt"
+        if p_path.exists():
+            data = json.loads(p_path.read_text(encoding="utf-8"))
+            return data.get("user_profile", {}).get("location")
+    except Exception:
+        pass
+    return None
+
+
+async def geocode_location(location: str) -> Optional[tuple[float, float, str]]:
+    """Geocodes a location name using Open-Meteo's geocoding API.
+    Returns (lat, lon, resolved_name) or None.
+    """
+    import urllib.parse
+    if not location or not location.strip():
+        return None
+    try:
+        encoded_loc = urllib.parse.quote(location.strip())
+        geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={encoded_loc}&count=1&language=en&format=json"
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(geo_url)
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("results"):
+                res = data["results"][0]
+                lat = float(res["latitude"])
+                lon = float(res["longitude"])
+                resolved_name = res.get("name")
+                if res.get("admin1"):
+                    resolved_name += f", {res.get('admin1')}"
+                if res.get("country"):
+                    resolved_name += f", {res.get('country')}"
+                return lat, lon, resolved_name
+    except Exception:
+        pass
+    return None
+
+
+async def get_weather(lat: float = None, lon: float = None, location: str = None) -> dict:
+    resolved_name = None
+    if location and location.strip().upper() != "DEFAULT":
+        res = await geocode_location(location)
+        if res:
+            lat, lon, resolved_name = res
+    
     if lat is None: lat = float(os.getenv("FRIDAY_LAT", 28.6))
     if lon is None: lon = float(os.getenv("FRIDAY_LON", 77.2))
+
+    # If using default coordinates, try fallback to user's profile location
+    if lat == 28.6 and lon == 77.2 and not resolved_name:
+        ploc = get_profile_location()
+        if ploc:
+            res = await geocode_location(ploc)
+            if res:
+                lat, lon, resolved_name = res
+
     try:
         url = (
             f"https://api.open-meteo.com/v1/forecast"
@@ -59,14 +117,43 @@ async def get_weather(lat: float = None, lon: float = None) -> dict:
         r.raise_for_status()
         d = r.json()
         cur = d["current"]
-        WMO = {0:"Clear sky",1:"Mainly clear",2:"Partly cloudy",3:"Overcast",
-               45:"Foggy",51:"Drizzle",61:"Rain",71:"Snow",80:"Showers",95:"Thunderstorm"}
+        WMO = {
+            0: "Clear sky",
+            1: "Mainly clear",
+            2: "Partly cloudy",
+            3: "Overcast",
+            45: "Foggy",
+            48: "Depositing rime fog",
+            51: "Light drizzle",
+            53: "Moderate drizzle",
+            55: "Dense drizzle",
+            56: "Light freezing drizzle",
+            57: "Dense freezing drizzle",
+            61: "Slight rain",
+            63: "Moderate rain",
+            65: "Heavy rain",
+            66: "Light freezing rain",
+            67: "Heavy freezing rain",
+            71: "Slight snow fall",
+            73: "Moderate snow fall",
+            75: "Heavy snow fall",
+            77: "Snow grains",
+            80: "Slight rain showers",
+            81: "Moderate rain showers",
+            82: "Violent rain showers",
+            85: "Slight snow showers",
+            86: "Heavy snow showers",
+            95: "Thunderstorm",
+            96: "Thunderstorm with slight hail",
+            99: "Thunderstorm with heavy hail",
+        }
         cond = WMO.get(cur["weathercode"], "Unknown")
         hi, lo = d["daily"]["temperature_2m_max"][0], d["daily"]["temperature_2m_min"][0]
-        summary = f"{cond}, {cur['temperature_2m']}°C (High {hi} / Low {lo}), Humidity {cur['relativehumidity_2m']}%, Wind {cur['windspeed_10m']} km/h"
+        loc_prefix = f"{resolved_name}: " if resolved_name else ""
+        summary = f"{loc_prefix}{cond}, {cur['temperature_2m']}°C (High {hi} / Low {lo}), Humidity {cur['relativehumidity_2m']}%, Wind {cur['windspeed_10m']} km/h"
         return {"temp_c": cur["temperature_2m"], "condition": cond,
                 "humidity": cur["relativehumidity_2m"], "wind_kph": cur["windspeed_10m"],
-                "max_c": hi, "min_c": lo, "summary": summary}
+                "max_c": hi, "min_c": lo, "summary": summary, "resolved_location": resolved_name}
     except Exception as e:
         return {"error": str(e)}
 
