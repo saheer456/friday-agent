@@ -27,6 +27,7 @@ os.chdir(ROOT)
 from dotenv import load_dotenv
 
 load_dotenv(ROOT / ".env")
+load_dotenv(ROOT / "friday-agent.env")
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Security
 from fastapi.middleware.cors import CORSMiddleware
