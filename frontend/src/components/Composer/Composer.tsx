@@ -3,6 +3,8 @@ import { Mic, Paperclip, Send } from 'lucide-react';
 import styles from './Composer.module.css';
 
 interface ComposerProps {
+  value: string;
+  onChange: (val: string) => void;
   onSend: (text: string, isVoiceMode: boolean) => void;
   isBusy: boolean;
   isRecording: boolean;
@@ -13,7 +15,7 @@ interface ComposerProps {
   allowUpload?: boolean;
 }
 
-export function Composer({ onSend, isBusy, isRecording, onToggleRecord, onUpload, uploadState, interimText, allowUpload = true }: ComposerProps) {
+export function Composer({ value, onChange, onSend, isBusy, isRecording, onToggleRecord, onUpload, uploadState, interimText, allowUpload = true }: ComposerProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -26,10 +28,10 @@ export function Composer({ onSend, isBusy, isRecording, onToggleRecord, onUpload
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (isBusy || !inputRef.current?.value.trim()) return;
-    onSend(inputRef.current.value.trim(), isRecording);
-    inputRef.current.value = '';
-    autoGrow();
+    if (isBusy || !value.trim()) return;
+    onSend(value.trim(), isRecording);
+    onChange('');
+    setTimeout(autoGrow, 0);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -83,9 +85,13 @@ export function Composer({ onSend, isBusy, isRecording, onToggleRecord, onUpload
           ref={inputRef}
           className={styles.textarea}
           rows={1}
+          value={value}
           placeholder={isRecording && interimText ? interimText : "Message FRIDAY…"}
           maxLength={16000}
-          onChange={autoGrow}
+          onChange={(e) => {
+            onChange(e.target.value);
+            autoGrow();
+          }}
           onKeyDown={handleKeyDown}
         />
 

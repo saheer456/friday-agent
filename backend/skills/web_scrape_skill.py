@@ -32,9 +32,10 @@ class WebScrapeSkill(BaseSkill):
         },
         required=["url"],
     )
-    def scrape_url(self, url: str, max_chars: int = 3000) -> SkillResult:
+    async def scrape_url(self, url: str, max_chars: int = 3000) -> SkillResult:
         try:
-            r = httpx.get(url, headers=_HEADERS, follow_redirects=True, timeout=10.0)
+            async with httpx.AsyncClient() as client:
+                r = await client.get(url, headers=_HEADERS, follow_redirects=True, timeout=10.0)
             r.raise_for_status()
             doc = Document(r.text)
             soup = BeautifulSoup(doc.summary(), "html.parser")

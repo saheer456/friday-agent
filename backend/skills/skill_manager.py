@@ -44,9 +44,8 @@ class SkillManager:
     # ── Registration ───────────────────────────────────────────────────────────
 
     def register(self, skill: BaseSkill, config: Optional[Dict[str, Any]] = None) -> None:
-        """Register a skill, optionally configuring it immediately."""
-        if config:
-            skill.configure(config)
+        """Register a skill, configuring it immediately."""
+        skill.configure(config or {})
         SkillRegistry.register(skill)
         print(f"[Skills] ✓ Registered '{skill.name}' | actions: {list(skill.get_actions().keys())}")
 
@@ -106,6 +105,36 @@ class SkillManager:
         else:
             skill  = SkillRegistry.get(skill_name)
             result = skill.run(action_name, **args)
+
+        result.duration_ms = (time.perf_counter() - t0) * 1000
+        self._history.append({
+            "tool":       tool_name,
+            "args":       args,
+            "status":     result.status,
+            "duration_ms": result.duration_ms,
+            "ts":         time.time(),
+        })
+        return result
+
+    async def dispatch_async(self, tool_name: str, args: Dict[str, Any]) -> SkillResult:
+        """Asynchronously route an LLM tool_call to the correct skill + action."""
+        t0 = time.perf_counter()
+
+        # Find a registered skill whose name is a prefix of tool_name
+        skill_name  = None
+        action_name = None
+        for name in SkillRegistry.all():
+            prefix = f"{name}_"
+            if tool_name.startswith(prefix):
+                skill_name  = name
+                action_name = tool_name[len(prefix):]
+                break
+
+        if skill_name is None:
+            result = SkillResult.invalid(f"No skill found for tool '{tool_name}'")
+        else:
+            skill  = SkillRegistry.get(skill_name)
+            result = await skill.run_async(action_name, **args)
 
         result.duration_ms = (time.perf_counter() - t0) * 1000
         self._history.append({

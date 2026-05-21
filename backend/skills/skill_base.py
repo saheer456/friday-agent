@@ -202,6 +202,42 @@ class BaseSkill(ABC):
             return SkillResult.fail(str(e), skill=self.name, action=action,
                                     duration_ms=(time.perf_counter() - t0) * 1000)
 
+    async def run_async(self, action: str, **kwargs) -> SkillResult:
+        """Dispatch an action asynchronously, supporting both sync and async actions."""
+        import asyncio
+        if not self._enabled:
+            return SkillResult(status=SkillStatus.DISABLED,
+                               error=f"Skill '{self.name}' is disabled.",
+                               skill=self.name, action=action)
+        if not self._configured:
+            return SkillResult.not_configured(self.name)
+
+        actions = self.get_actions()
+        if action not in actions:
+            return SkillResult.invalid(f"Unknown action '{action}' for skill '{self.name}'")
+
+        t0 = time.perf_counter()
+        try:
+            func = actions[action]
+            if inspect.iscoroutinefunction(func):
+                result = await func(**kwargs)
+            else:
+                result = await asyncio.to_thread(func, **kwargs)
+            result.skill  = self.name
+            result.action = action
+            result.duration_ms = (time.perf_counter() - t0) * 1000
+            self._exec_count += 1
+            if not result.is_success():
+                self._fail_count += 1
+            return result
+        except TypeError as e:
+            self._fail_count += 1
+            return SkillResult.invalid(f"Bad params for '{action}': {e}")
+        except Exception as e:
+            self._fail_count += 1
+            return SkillResult.fail(str(e), skill=self.name, action=action,
+                                    duration_ms=(time.perf_counter() - t0) * 1000)
+
     # ── Info ───────────────────────────────────────────────────────────────────
 
     def info(self) -> Dict[str, Any]:

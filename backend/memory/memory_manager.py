@@ -20,6 +20,8 @@ class MemoryManager:
         Initializes the SQLite DB and boots the embedding model + ChromaDB.
         """
         await long_term.init_db()
+        from . import chat_history
+        await chat_history.init_chat_history_db()
         short_term.clear_buffer()
         # Fire up the semantic layer (model load is blocking internally but wrapped async)
         await _sem_initialize()

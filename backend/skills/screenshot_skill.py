@@ -22,10 +22,14 @@ class ScreenshotSkill(BaseSkill):
         params={},
         required=[],
     )
-    def capture_screenshot(self) -> SkillResult:
-        try:
+    async def capture_screenshot(self) -> SkillResult:
+        import asyncio
+        def _grab():
             from PIL import ImageGrab
-            img = ImageGrab.grab()
+            return ImageGrab.grab()
+
+        try:
+            img = await asyncio.to_thread(_grab)
         except (ImportError, OSError):
             return SkillResult.fail("Screenshot not supported on this platform.")
 
@@ -42,12 +46,13 @@ class ScreenshotSkill(BaseSkill):
                 ]}],
                 "max_tokens": 512,
             }
-            r = httpx.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=payload,
-                timeout=30.0,
-            )
+            async with httpx.AsyncClient() as client:
+                r = await client.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json=payload,
+                    timeout=30.0,
+                )
             r.raise_for_status()
             desc = r.json()["choices"][0]["message"]["content"]
             return SkillResult.ok(

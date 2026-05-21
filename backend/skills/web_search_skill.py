@@ -23,10 +23,14 @@ class WebSearchSkill(BaseSkill):
         },
         required=["query"],
     )
-    def search_web(self, query: str, max_results: int = 3) -> SkillResult:
+    async def search_web(self, query: str, max_results: int = 3) -> SkillResult:
         try:
-            with DDGS() as ddgs:
-                results = list(ddgs.text(query, max_results=max_results))
+            import asyncio
+            def _ddgs_run():
+                with DDGS() as ddgs:
+                    return list(ddgs.text(query, max_results=max_results))
+
+            results = await asyncio.to_thread(_ddgs_run)
             if not results:
                 return SkillResult.ok(message="No results found.", data={"results": []})
             formatted = []

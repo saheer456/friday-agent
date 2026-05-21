@@ -93,8 +93,8 @@ class ProviderManager:
             if provider.status == ProviderStatus.RATE_LIMITED:
                 continue
 
-            if not self._check_rate_limit(provider_name):
-                await asyncio.sleep(0.1)
+            while not self._check_rate_limit(provider_name):
+                await asyncio.sleep(0.05)
 
             for attempt in range(provider.config.max_retries):
                 try:
@@ -145,8 +145,8 @@ class ProviderManager:
             if provider.status == ProviderStatus.RATE_LIMITED:
                 continue
 
-            if not self._check_rate_limit(provider_name):
-                await asyncio.sleep(0.1)
+            while not self._check_rate_limit(provider_name):
+                await asyncio.sleep(0.05)
 
             for attempt in range(provider.config.max_retries):
                 try:

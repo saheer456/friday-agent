@@ -26,9 +26,13 @@
 | 9 | **Task tracker** | Markdown-based task detection |
 | 10 | **Clipboard reader** | `pyperclip` |
 | 11 | **URL scraper** | `readability-lxml` + BeautifulSoup |
-| 12 | **Browser voice input** | Web Speech API (interim results, server-side Whisper fallback) |
+| 12 | **Browser voice input** | Web Speech API (interim results, server-side Whisper fallback, continuous mic auto-restart) |
 | 13 | **Neural TTS** | Kokoro ONNX (local) → edge-tts fallback |
 | 14 | **Auto memory ranking** | Heuristic importance scoring (no API call per exchange) |
+| 15 | **Persistent Session History** | Local SQLite storage (`backend/memory/chat_history.py`) restoring session context across server restarts |
+| 16 | **Async Skills Refactor** | Non-blocking dynamic tool execution framework (`backend/skills/`) utilizing `httpx.AsyncClient` |
+| 17 | **Voice Output Viz** | Real-time audio playback visualizer dynamically bound to TTS output signal level |
+| 18 | **Interactive Welcome Suggestions** | Click-to-submit suggestion tags guiding the user to start chats |
 
 ## 🚀 Quick Start
 
@@ -116,16 +120,18 @@ friday/
 │   ├── search.py               # DuckDuckGo web search
 │   ├── scraper.py              # URL content scraper
 │   ├── tools.py                # Local capability tools (weather, apps, etc.)
-│   ├── memory/                 # Long-term + short-term memory system
-│   ├── skills/                 # Tool-calling skills framework
+│   ├── memory/                 # Long-term + short-term + session chat memory system
+│   │   ├── chat_history.py     # SQLite session chat history persistence
+│   │   └── ...
+│   ├── skills/                 # Tool-calling skills framework (weather, code, search, scrape, screenshot)
 │   ├── file_intelligence.py    # File upload RAG pipeline
 │   └── tool_bridge.py          # LLM tool call dispatcher
 ├── web/
-│   ├── server.py               # FastAPI server (SSE streaming, file upload, TTS)
+│   ├── server.py               # FastAPI server (SSE streaming, file upload, TTS, `/api/clear`)
 │   ├── static/                 # Legacy static frontend
 │   └── __init__.py
 ├── frontend/                   # React 19 + TypeScript + Vite UI
-├── data/                       # Personal documents (gitignored)
+├── data/                       # Personal documents + SQLite databases (gitignored)
 ├── vectorstore/                # ChromaDB store (gitignored, auto-generated)
 ├── start_web.bat               # Full startup: builds frontend + starts server
 ├── start.bat                   # Quick start (server only)
@@ -151,19 +157,21 @@ See [`.env.example`](friday/.env.example) for all options.
 
 ```
 Browser (React) ──→ FastAPI (web/server.py) ──→ LLM Engine (brain.py)
-                                                      │
-                                             ┌────────┼────────────┐
-                                             ▼        ▼            ▼
-                                         Groq LLM  ChromaDB      Tools
-                                                   (memory/)    (weather/apps)
-                                                      │
-                                                 tts.py ──→ Audio
-
-Memory tiers:
-  Short-term (rolling buffer, 20 exchanges)
-  Long-term  (SQLite / Supabase, importance-scored)
-  Semantic   (ChromaDB vector embeddings, auto-categorized)
+                                                       │
+                                              ┌────────┼────────────┐
+                                              ▼        ▼            ▼
+                                          Groq LLM  ChromaDB      Skills (backend/skills/)
+                                                    (memory/)    (weather/scrape/code/search)
+                                                       │
+                                                  tts.py ──→ Audio
 ```
+
+## 🛠️ Modular Skills Platform
+
+FRIDAY runs a modular, asynchronous skills framework (`backend/skills/`) that decouples tool execution from the core orchestrator:
+- **Base Interfaces**: `BaseSkill` and `SkillManager` orchestrate registration, configuration, and execution.
+- **Asynchronous Execution**: Migrated active skills (Weather, Terminal/Code, Web Scraper, Web Search, Screenshots) to run asynchronously via `httpx.AsyncClient` or offloaded synchronously to asyncio thread pools.
+- **Configuration Auto-Initialization**: Default skills without explicit initializers are auto-configured upon registration to prevent "not configured" exceptions.
 
 ## 📡 API Reference
 
@@ -179,25 +187,30 @@ All endpoints served from `http://127.0.0.1:8080`.
 | `POST` | `/api/speak` | Markdown → spoken prose → audio (via Groq rewrite) |
 | `POST` | `/api/stt` | Upload audio → transcribed text (faster-whisper) |
 | `POST` | `/api/upload` | Ingest a file (PDF, DOCX, TXT, CSV, JSON, MD) |
-| `POST` | `/api/clear` | Clear conversation history |
+| `POST` | `/api/clear` | Clear conversation history from memory and persistent chat history database |
 | `GET` | `/api/memories` | List stored memories (paginated, `?limit=&offset=`) |
 | `POST` | `/api/memories` | Add a memory manually (`{content, category, importance}`) |
 | `DELETE` | `/api/memories/:id` | Delete a specific memory |
 
 ## 🧠 Memory System
 
-Three-tier memory architecture:
+Four-tier memory architecture:
 
 **1. Short-term buffer** (`memory/short_term.py`)
 - Rolling deque of the last 20 exchanges (4000 chars max)
 - Always injected into LLM context for conversational continuity
 
-**2. Long-term SQLite / Supabase** (`memory/long_term.py`)
+**2. Persistent Session Chat History** (`memory/chat_history.py`)
+- Automatically records conversation turns to an SQLite table on disk.
+- Restores the active context automatically across server restarts or UI refreshes.
+- Integrated with the `/api/clear` endpoint to clean session context cleanly.
+
+**3. Long-term SQLite / Supabase** (`memory/long_term.py`)
 - Persists important memories (importance ≥ 0.4) to disk
 - Auto-detects Supabase if `SUPABASE_URL` + `SUPABASE_KEY` are set, otherwise falls back to local SQLite
 - Persistent connection pooling (no open/close per operation)
 
-**3. Semantic vector store** (`memory/semantic_memory/`)
+**4. Semantic vector store** (`memory/semantic_memory/`)
 - Embeddings via FastEmbed (`BAAI/bge-small-en-v1.5`, ONNX runtime, ~30MB)
 - Stored in ChromaDB (local) or Supabase pgvector (production)
 - Automatically cross-searched on every query for relevant context

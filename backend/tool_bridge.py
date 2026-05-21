@@ -83,7 +83,14 @@ def handle_tool_call(tool_name: str, tool_args_json: str) -> str:
 
 
 async def handle_tool_call_async(tool_name: str, tool_args_json: str) -> str:
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        None, handle_tool_call, tool_name, tool_args_json
-    )
+    try:
+        args = json.loads(tool_args_json) if tool_args_json else {}
+    except json.JSONDecodeError:
+        args = {}
+
+    try:
+        result = await skill_manager.dispatch_async(tool_name, args)
+        return result.to_tool_message()
+    except Exception as e:
+        logger.error("Tool execution failed for %s: %s", tool_name, e)
+        return f"Error executing tool {tool_name}: {e}"

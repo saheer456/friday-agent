@@ -221,8 +221,8 @@ app.add_middleware(
 REACT_DIST_DIR = ROOT / "frontend" / "dist"
 ASSETS_DIR = REACT_DIST_DIR / "assets"
 
-if REACT_DIST_DIR.exists():
-    app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
+ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 
 
 # ───────────────────────────────────────────────────────────────
@@ -472,6 +472,11 @@ async def upload_file(file: UploadFile = File(...), _auth: dict = Depends(verify
 @app.post("/api/clear")
 async def clear_history(_auth: dict = Depends(verify_auth)):
     brain.conversation_history.clear()
+    try:
+        from backend.memory import chat_history
+        await chat_history.clear_chat_history()
+    except Exception as e:
+        print(f"[SERVER] Failed to clear DB chat history: {e}")
     return {"ok": True}
 
 

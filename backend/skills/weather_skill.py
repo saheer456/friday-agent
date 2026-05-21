@@ -26,7 +26,7 @@ class WeatherSkill(BaseSkill):
         super().__init__()
         self.configure()
 
-    def _fetch(self, forecast_days: int = 1) -> dict:
+    async def _fetch(self, forecast_days: int = 1) -> dict:
         url = (
             f"https://api.open-meteo.com/v1/forecast"
             f"?latitude={self._lat}&longitude={self._lon}"
@@ -34,7 +34,8 @@ class WeatherSkill(BaseSkill):
             f"&daily=temperature_2m_max,temperature_2m_min"
             f"&timezone=auto&forecast_days={forecast_days}"
         )
-        r = httpx.get(url, timeout=8.0)
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url, timeout=8.0)
         r.raise_for_status()
         return r.json()
 
@@ -46,9 +47,9 @@ class WeatherSkill(BaseSkill):
         },
         required=[],
     )
-    def get_current_weather(self, lat: Optional[float] = None, lon: Optional[float] = None) -> SkillResult:
+    async def get_current_weather(self, lat: Optional[float] = None, lon: Optional[float] = None) -> SkillResult:
         try:
-            d = self._fetch(forecast_days=1)
+            d = await self._fetch(forecast_days=1)
             cur = d["current"]
             cond = WMO.get(cur["weathercode"], "Unknown")
             hi, lo = d["daily"]["temperature_2m_max"][0], d["daily"]["temperature_2m_min"][0]
@@ -73,9 +74,9 @@ class WeatherSkill(BaseSkill):
         },
         required=[],
     )
-    def get_forecast(self, days: int = 3, lat: Optional[float] = None, lon: Optional[float] = None) -> SkillResult:
+    async def get_forecast(self, days: int = 3, lat: Optional[float] = None, lon: Optional[float] = None) -> SkillResult:
         try:
-            d = self._fetch(forecast_days=days)
+            d = await self._fetch(forecast_days=days)
             daily = d["daily"]
             entries = []
             for i in range(len(daily["time"])):

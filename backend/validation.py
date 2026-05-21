@@ -24,11 +24,11 @@ def validate_environment():
 
     # Check Google Workspace Credentials
     root = Path(__file__).resolve().parent.parent
-    cred_path = root / "data" / "credentials.json"
+    cred_path = root / "data" / "google_credentials.json"
     
     if not cred_path.exists():
         logger.warning(
-            "WARNING: Google Workspace 'credentials.json' not found in data/. "
+            "WARNING: Google Workspace 'google_credentials.json' not found in data/. "
             "Google integrations (Gmail, Calendar, Docs, Sheets) will fail."
         )
     else:

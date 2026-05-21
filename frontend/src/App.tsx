@@ -16,6 +16,8 @@ function App() {
   const [telemetryOpen, setTelemetryOpen] = useState(false);
   const [memoriesOpen, setMemoriesOpen] = useState(false);
   const [interimText, setInterimText] = useState('');
+  const [composerValue, setComposerValue] = useState('');
+  const [initialComposerValue, setInitialComposerValue] = useState('');
   const [authLoading, setAuthLoading] = useState(true);
   const [loginEnabled, setLoginEnabled] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -36,9 +38,27 @@ function App() {
   }, [fetchSystem]);
 
   const { isRecording, isPlaying, toggleRecording, stopAudio, queueTTS } = useVoice(
-    (text) => { setInterimText(''); handleSend(text, true); },
-    (text) => setInterimText(text),
+    (speechText) => {
+      setInterimText('');
+      const finalMsg = (initialComposerValue.trim() + ' ' + speechText.trim()).trim();
+      setComposerValue('');
+      setInitialComposerValue('');
+      if (finalMsg) {
+        handleSend(finalMsg, true);
+      }
+    },
+    (speechText) => {
+      setInterimText(speechText);
+      setComposerValue((initialComposerValue.trim() + ' ' + speechText.trim()).trim());
+    },
   );
+
+  const handleToggleRecord = () => {
+    if (!isRecording) {
+      setInitialComposerValue(composerValue);
+    }
+    toggleRecording();
+  };
 
   const { messages, phases, isBusy: chatBusy, sendMessage, clearChat, addSystemMessage } =
     useChat(handleStatusChange, hasFullAccess ? queueTTS : () => {}, { limitedMode });
@@ -220,10 +240,12 @@ function App() {
 
         <div className={styles.composerWrap}>
           <Composer
+            value={composerValue}
+            onChange={setComposerValue}
             onSend={handleSend}
             isBusy={chatBusy}
             isRecording={isRecording}
-            onToggleRecord={toggleRecording}
+            onToggleRecord={handleToggleRecord}
             onUpload={handleUpload}
             allowUpload={hasFullAccess}
             uploadState={{

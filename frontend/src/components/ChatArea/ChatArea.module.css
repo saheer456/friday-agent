@@ -35,8 +35,34 @@
 .welcomeSub {
   font-size: 0.9rem;
   color: var(--text-muted);
-  max-width: 320px;
+  max-width: 420px;
   line-height: 1.6;
+  margin-bottom: 12px;
+}
+.suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 380px;
+}
+.suggestBtn {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 12px 18px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+.suggestBtn:hover {
+  background: var(--border);
+  border-color: var(--text-muted);
+  transform: translateY(-1px);
 }
 
 /* ── Messages ─── */
@@ -183,7 +209,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: circle-pulse 2.5s ease-in-out infinite;
+  transform: scale(calc(0.9 + var(--voice-volume, 0) * 0.006));
+  transition: transform 0.05s ease-out;
   backdrop-filter: blur(4px);
 }
 .speakingCircleInner {
@@ -191,7 +218,8 @@
   height: 100px;
   border-radius: 50%;
   background: rgba(107, 112, 102, 0.12);
-  animation: circle-pulse 2.5s ease-in-out infinite reverse;
+  transform: scale(calc(0.85 + var(--voice-volume, 0) * 0.01));
+  transition: transform 0.05s ease-out;
 }
 @keyframes circle-pulse {
   0%, 100% { transform: scale(0.95); opacity: 0.7; }

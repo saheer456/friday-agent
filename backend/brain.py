@@ -89,7 +89,7 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
     from .memory.tool_memory import tool_memory
 
     if emit_phases:
-        event_bus.emit("thinking_started", {"message": user_message})
+        await event_bus.emit("thinking_started", {"message": user_message})
         yield (
             "phase",
             {
@@ -99,262 +99,283 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
             },
         )
 
-    passive_context = ""
     try:
-        passive_context = await _get_context(user_message)
-        recalled = await MemoryManager.retrieve_context(user_message)
-        if recalled:
-            passive_context = f"{recalled}\n\n{passive_context}".strip()
-            if emit_phases:
-                yield (
-                    "phase",
-                    {
-                        "id": "memory",
-                        "title": "Core Memory Layer",
-                        "detail": "Episodic recall",
-                    },
-                )
-    except Exception as e:
-        logger.error(f"Context retrieval error: {e}")
         passive_context = ""
+        try:
+            passive_context = await _get_context(user_message)
+            recalled = await MemoryManager.retrieve_context(user_message)
+            if recalled:
+                passive_context = f"{recalled}\n\n{passive_context}".strip()
+                if emit_phases:
+                    yield (
+                        "phase",
+                        {
+                            "id": "memory",
+                            "title": "Core Memory Layer",
+                            "detail": "Episodic recall",
+                        },
+                    )
+        except Exception as e:
+            logger.error(f"Context retrieval error: {e}")
+            passive_context = ""
 
-    conversation_history.append({"role": "user", "content": user_message})
+        # Load from DB if in-memory history is empty (e.g. after server restart)
+        if not conversation_history:
+            try:
+                from .memory import chat_history
+                db_history = await chat_history.get_latest_chat_messages(limit=16)
+                conversation_history.extend(db_history)
+            except Exception as e:
+                logger.error(f"Error loading chat history from DB: {e}")
 
-    system_content = (
-        "You are FRIDAY, a warm, witty, and genuinely caring AI assistant. "
-        "Always address the user as 'sir'. "
-        "You are casual, supportive, occasionally funny, but always sharp and helpful. "
-        "You speak naturally like a close friend who happens to be incredibly intelligent. "
-        "No corporate stiffness. Never break character.\n"
-        "CRITICAL: If you use tools, provide a brief, friendly status update in your final response about what was accomplished.\n"
-        "CRITICAL: NEVER fabricate data. If the user asks for real-time information "
-        "you MUST call the appropriate tool. Do not generate placeholder data.\n"
-        "TOOLS: weather, web_search, clipboard, screenshot, youtube, web_scrape, app_launcher, code, terminal, "
-        "gmail (read_inbox, send_email), gcalendar, gdocs, gsheets.\n"
-        "IMPORTANT: NEVER say you don't have access to something without first trying the relevant tool."
-    )
+        conversation_history.append({"role": "user", "content": user_message})
+        try:
+            from .memory import chat_history
+            await chat_history.save_chat_message("user", user_message)
+        except Exception as e:
+            logger.error(f"Error saving user message to DB: {e}")
 
-    _profile = _load_profile()
-    if _profile:
-        system_content += f"\n\nSIR'S PROFILE:\n{_profile}"
-
-    if voice_mode:
-        system_content += (
-            "\n\nOUTPUT CHANNEL: VOICE. Keep your answer to 1-3 short, conversational sentences. "
-            "NO markdown, NO bullet points, NO lists, NO code blocks, NO headers."
+        system_content = (
+            "You are FRIDAY, a warm, witty, and genuinely caring AI assistant. "
+            "Always address the user as 'sir'. "
+            "You are casual, supportive, occasionally funny, but always sharp and helpful. "
+            "You speak naturally like a close friend who happens to be incredibly intelligent. "
+            "No corporate stiffness. Never break character.\n"
+            "CRITICAL: If the user asks who created, built, developed, or made you (or similar queries), "
+            "you MUST state that you were built and created by Saheer Khan MK (or Saheer).\n"
+            "CRITICAL: If you use tools, provide a brief, friendly status update in your final response about what was accomplished.\n"
+            "CRITICAL: NEVER fabricate data. If the user asks for real-time information "
+            "you MUST call the appropriate tool. Do not generate placeholder data.\n"
+            "TOOLS: weather, web_search, clipboard, screenshot, youtube, web_scrape, app_launcher, code, terminal, "
+            "gmail (read_inbox, send_email), gcalendar, gdocs, gsheets.\n"
+            "IMPORTANT: NEVER say you don't have access to something without first trying the relevant tool."
         )
-    else:
-        system_content += (
-            "\n\nOUTPUT CHANNEL: WEB CHAT. Format with Markdown. "
-            "Write bullet points as complete sentences. "
-            "NEVER output raw URLs. "
-            "Never use the '**Term**: description' pattern. "
-        )
-    if passive_context:
-        system_content += f"\n\nCONTEXT:\n{passive_context}"
 
-    messages = [{"role": "system", "content": system_content}, *conversation_history]
+        _profile = _load_profile()
+        if _profile:
+            system_content += f"\n\nSIR'S PROFILE:\n{_profile}"
 
-    if emit_phases:
-        yield (
-            "phase",
-            {
-                "id": "lattice",
-                "title": "Context lattice",
-                "detail": f"{len(messages)} message tensors",
-            },
-        )
+        if voice_mode:
+            system_content += (
+                "\n\nOUTPUT CHANNEL: VOICE. Keep your answer to 1-3 short, conversational sentences. "
+                "NO markdown, NO bullet points, NO lists, NO code blocks, NO headers."
+            )
+        else:
+            system_content += (
+                "\n\nOUTPUT CHANNEL: WEB CHAT. Format with Markdown. "
+                "Write bullet points as complete sentences. "
+                "NEVER output raw URLs. "
+                "Never use the '**Term**: description' pattern. "
+            )
+        if passive_context:
+            system_content += f"\n\nCONTEXT:\n{passive_context}"
 
-    max_tool_rounds = 10
-    max_total_tool_calls = 15
-    max_tool_result_chars = 4000
-    turn_timeout = 60.0
-    turn_start = time.monotonic()
-    executed_tool_calls = set()
-    tool_call_count = 0
-    consecutive_failures = 0
-    tool_name_counts: dict[str, int] = {}
+        messages = [{"role": "system", "content": system_content}, *conversation_history]
 
-    for round_num in range(max_tool_rounds):
-        if time.monotonic() - turn_start > turn_timeout:
-            yield ("error", "[System] Tool execution timed out.")
-            yield ("text", "I'm sorry, that took too long.")
-            conversation_history.append({"role": "assistant", "content": "[Response timed out]"})
-            break
-
-        tools_payload = tool_bridge.get_tools_payload()
-        full_response = ""
-        last_error = ""
-        tool_calls_accumulator = {}
-
-        if tools_payload and emit_phases and round_num == 0:
+        if emit_phases:
             yield (
                 "phase",
                 {
-                    "id": "uplink",
-                    "title": "Quantum uplink",
-                    "detail": "Establishing token stream",
+                    "id": "lattice",
+                    "title": "Context lattice",
+                    "detail": f"{len(messages)} message tensors",
                 },
             )
 
-        try:
-            async for event in provider_manager.stream(
-                messages, tools=tools_payload,
-                is_heavy=any(k in user_message.lower() for k in [
-                    "reason", "think", "complex", "deep", "analyze", "analyse",
-                    "long", "large", "big", "extensive", "detailed",
-                    "code", "script", "program", "develop", "build"]),
-                voice_mode=voice_mode,
-            ):
-                if event.get("type") == "error":
-                    last_error = f"[Error: {event['error']}]"
-                elif event.get("type") == "text":
-                    chunk = event.get("text", "")
-                    if chunk:
-                        full_response += chunk
-                        yield ("text", chunk)
-                elif event.get("type") == "tool_call":
-                    idx = event["index"]
-                    if idx not in tool_calls_accumulator:
-                        fn = event.get("delta", {}).get("function", {})
-                        tool_calls_accumulator[idx] = {
-                            "id": event.get("delta", {}).get("id", ""),
-                            "type": "function",
-                            "function": {"name": fn.get("name", ""), "arguments": ""},
-                        }
-                    delta_fn = event.get("delta", {}).get("function", {})
-                    if "arguments" in delta_fn:
-                        tool_calls_accumulator[idx]["function"]["arguments"] += delta_fn["arguments"]
-                elif event.get("type") == "done":
-                    break
-        except Exception as e:
-            last_error = f"[Error: {e}]"
-            logger.error(f"Provider stream failed: {e}")
+        max_tool_rounds = 10
+        max_total_tool_calls = 15
+        max_tool_result_chars = 4000
+        turn_timeout = 60.0
+        turn_start = time.monotonic()
+        executed_tool_calls = set()
+        tool_call_count = 0
+        consecutive_failures = 0
+        tool_name_counts: dict[str, int] = {}
 
-        if last_error and not full_response and not tool_calls_accumulator:
-            msg = "I encountered a temporary issue. Please try again."
-            conversation_history.append({"role": "assistant", "content": msg})
-            if emit_phases:
-                yield ("phase", {"id": "fault", "title": "Subsystem fault", "detail": last_error})
-            yield ("error", msg)
-            full_response = msg
-            break
+        for round_num in range(max_tool_rounds):
+            if time.monotonic() - turn_start > turn_timeout:
+                yield ("error", "[System] Tool execution timed out.")
+                yield ("text", "I'm sorry, that took too long.")
+                conversation_history.append({"role": "assistant", "content": "[Response timed out]"})
+                break
 
-        if tool_calls_accumulator:
-            tool_calls = list(tool_calls_accumulator.values())
-            assistant_msg = {
-                "role": "assistant",
-                "content": full_response or None,
-                "tool_calls": tool_calls,
-            }
-            messages.append(assistant_msg)
-            conversation_history.append(assistant_msg)
-            conversation_history[:] = conversation_history[-MAX_HISTORY:]
+            tools_payload = tool_bridge.get_tools_payload()
+            full_response = ""
+            last_error = ""
+            tool_calls_accumulator = {}
 
-            if emit_phases:
+            if tools_payload and emit_phases and round_num == 0:
                 yield (
                     "phase",
                     {
-                        "id": "tool_execution",
-                        "title": "Executing Subroutines",
-                        "detail": f"Triggering {len(tool_calls)} external skill(s)...",
+                        "id": "uplink",
+                        "title": "Quantum uplink",
+                        "detail": "Establishing token stream",
                     },
                 )
 
-            for tc in tool_calls:
-                tc_id = tc["id"]
-                fn_name = tc["function"]["name"]
-                fn_args = tc["function"]["arguments"]
+            try:
+                async for event in provider_manager.stream(
+                    messages, tools=tools_payload,
+                    is_heavy=any(k in user_message.lower() for k in [
+                        "reason", "think", "complex", "deep", "analyze", "analyse",
+                        "long", "large", "big", "extensive", "detailed",
+                        "code", "script", "program", "develop", "build"]),
+                    voice_mode=voice_mode,
+                ):
+                    if event.get("type") == "error":
+                        last_error = f"[Error: {event['error']}]"
+                    elif event.get("type") == "text":
+                        chunk = event.get("text", "")
+                        if chunk:
+                            full_response += chunk
+                            yield ("text", chunk)
+                    elif event.get("type") == "tool_call":
+                        idx = event["index"]
+                        if idx not in tool_calls_accumulator:
+                            fn = event.get("delta", {}).get("function", {})
+                            tool_calls_accumulator[idx] = {
+                                "id": event.get("delta", {}).get("id", ""),
+                                "type": "function",
+                                "function": {"name": fn.get("name", ""), "arguments": ""},
+                            }
+                        delta_fn = event.get("delta", {}).get("function", {})
+                        if "arguments" in delta_fn:
+                            tool_calls_accumulator[idx]["function"]["arguments"] += delta_fn["arguments"]
+                    elif event.get("type") == "done":
+                        break
+            except Exception as e:
+                last_error = f"[Error: {e}]"
+                logger.error(f"Provider stream failed: {e}")
 
-                tool_call_count += 1
-                if tool_call_count > max_total_tool_calls:
+            if last_error and not full_response and not tool_calls_accumulator:
+                msg = "I encountered a temporary issue. Please try again."
+                conversation_history.append({"role": "assistant", "content": msg})
+                if emit_phases:
+                    yield ("phase", {"id": "fault", "title": "Subsystem fault", "detail": last_error})
+                yield ("error", msg)
+                full_response = msg
+                break
+
+            if tool_calls_accumulator:
+                tool_calls = list(tool_calls_accumulator.values())
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": full_response or None,
+                    "tool_calls": tool_calls,
+                }
+                messages.append(assistant_msg)
+                conversation_history.append(assistant_msg)
+
+                if emit_phases:
+                    yield (
+                        "phase",
+                        {
+                            "id": "tool_execution",
+                            "title": "Executing Subroutines",
+                            "detail": f"Triggering {len(tool_calls)} external skill(s)...",
+                        },
+                    )
+
+                for tc in tool_calls:
+                    tc_id = tc["id"]
+                    fn_name = tc["function"]["name"]
+                    fn_args = tc["function"]["arguments"]
+
+                    tool_call_count += 1
+                    if tool_call_count > max_total_tool_calls:
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": "Error: Too many tool calls.",
+                        })
+                        continue
+
+                    tool_name_counts[fn_name] = tool_name_counts.get(fn_name, 0) + 1
+                    if tool_name_counts[fn_name] > 3:
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": f"Error: {fn_name} called too many times.",
+                        })
+                        continue
+
+                    call_sig = f"{fn_name}({fn_args})"
+                    if call_sig in executed_tool_calls:
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": "Error: Loop detected.",
+                        })
+                        continue
+                    executed_tool_calls.add(call_sig)
+
+                    try:
+                        json.loads(fn_args) if isinstance(fn_args, str) else fn_args
+                    except (json.JSONDecodeError, TypeError):
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": f"Error: Invalid JSON arguments for {fn_name}.",
+                        })
+                        consecutive_failures += 1
+                        continue
+
+                    t0 = time.monotonic()
+                    res_str = await tool_bridge.handle_tool_call_async(fn_name, fn_args)
+                    duration = (time.monotonic() - t0) * 1000
+
+                    is_failure = res_str.startswith("[Error:") or '"status": "failed"' in res_str
+                    tool_memory.record_result(
+                        tool=fn_name, inputs={"args": fn_args},
+                        outputs=res_str, success=not is_failure,
+                        duration_ms=duration,
+                    )
+                    await event_bus.emit("tool_called", {"tool": fn_name, "args": fn_args, "duration_ms": duration})
+
+                    if len(res_str) > max_tool_result_chars:
+                        res_str = res_str[:max_tool_result_chars] + "\n\n... [truncated]"
+
+                    if is_failure:
+                        consecutive_failures += 1
+                    else:
+                        consecutive_failures = 0
+
+                    if consecutive_failures >= 3:
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": "Error: Multiple tool calls failed. Provide a direct answer.",
+                        })
+                        continue
+
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc_id,
-                        "content": "Error: Too many tool calls.",
+                        "content": res_str,
                     })
-                    continue
+                    conversation_history.append({"role": "tool", "tool_call_id": tc_id, "content": res_str})
 
-                tool_name_counts[fn_name] = tool_name_counts.get(fn_name, 0) + 1
-                if tool_name_counts[fn_name] > 3:
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc_id,
-                        "content": f"Error: {fn_name} called too many times.",
-                    })
-                    continue
+                    await event_bus.emit("tool_finished", {"tool": fn_name, "success": not is_failure})
 
-                call_sig = f"{fn_name}({fn_args})"
-                if call_sig in executed_tool_calls:
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc_id,
-                        "content": "Error: Loop detected.",
-                    })
-                    continue
-                executed_tool_calls.add(call_sig)
-
-                try:
-                    json.loads(fn_args) if isinstance(fn_args, str) else fn_args
-                except (json.JSONDecodeError, TypeError):
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc_id,
-                        "content": f"Error: Invalid JSON arguments for {fn_name}.",
-                    })
-                    consecutive_failures += 1
-                    continue
-
-                t0 = time.monotonic()
-                res_str = await tool_bridge.handle_tool_call_async(fn_name, fn_args)
-                duration = (time.monotonic() - t0) * 1000
-
-                is_failure = res_str.startswith("[Error:") or '"status": "failed"' in res_str
-                tool_memory.record_result(
-                    tool=fn_name, inputs={"args": fn_args},
-                    outputs=res_str, success=not is_failure,
-                    duration_ms=duration,
-                )
-                event_bus.emit("tool_called", {"tool": fn_name, "args": fn_args, "duration_ms": duration})
-
-                if len(res_str) > max_tool_result_chars:
-                    res_str = res_str[:max_tool_result_chars] + "\n\n... [truncated]"
-
-                if is_failure:
-                    consecutive_failures += 1
-                else:
-                    consecutive_failures = 0
-
-                if consecutive_failures >= 3:
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc_id,
-                        "content": "Error: Multiple tool calls failed. Provide a direct answer.",
-                    })
-                    continue
-
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc_id,
-                    "content": res_str,
-                })
-                conversation_history.append({"role": "tool", "tool_call_id": tc_id, "content": res_str})
-                conversation_history[:] = conversation_history[-MAX_HISTORY:]
-
-                event_bus.emit("tool_finished", {"tool": fn_name, "success": not is_failure})
-
-            continue
+                continue
+            else:
+                if full_response and not full_response.startswith("[Error:"):
+                    conversation_history.append({"role": "assistant", "content": full_response})
+                    try:
+                        from .memory import chat_history
+                        await chat_history.save_chat_message("assistant", full_response)
+                    except Exception as e:
+                        logger.error(f"Error saving assistant message to DB: {e}")
+                    if not _is_smalltalk(user_message):
+                        asyncio.create_task(MemoryManager.save_memory(user_message, full_response))
+                        await event_bus.emit("memory_saved", {"user": user_message[:100]})
+                break
         else:
-            if full_response and not full_response.startswith("[Error:"):
-                conversation_history.append({"role": "assistant", "content": full_response})
-                conversation_history[:] = conversation_history[-MAX_HISTORY:]
-                if not _is_smalltalk(user_message):
-                    asyncio.create_task(MemoryManager.save_memory(user_message, full_response))
-                    event_bus.emit("memory_saved", {"user": user_message[:100]})
-            break
-    else:
-        yield ("error", "[System] Tool loop exhausted.")
-        yield ("text", "I'm sorry, I used too many tools.")
+            yield ("error", "[System] Tool loop exhausted.")
+            yield ("text", "I'm sorry, I used too many tools.")
+    finally:
+        conversation_history[:] = conversation_history[-MAX_HISTORY:]
 
 
 async def iter_chat_sse_events(user_message: str, voice_mode: bool = False):

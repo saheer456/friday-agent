@@ -48,7 +48,39 @@ export function ChatArea({ messages, isSpeaking, onDropFile }: ChatAreaProps) {
         {messages.length === 0 ? (
           <div className={styles.welcome}>
             <p className={styles.welcomeLine}>Systems nominal, sir.</p>
-            <p className={styles.welcomeSub}>Ask anything — watch the neural trace while tokens stream.</p>
+            <p className={styles.welcomeSub}>I am FRIDAY, your personal assistant, created by Saheer Khan MK. Ready for input.</p>
+            <div className={styles.suggestions}>
+              <button className={styles.suggestBtn} onClick={() => {
+                const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
+                if (textarea) {
+                  textarea.value = "Who created you?";
+                  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                  textarea.focus();
+                }
+              }}>
+                Ask: "Who created you?"
+              </button>
+              <button className={styles.suggestBtn} onClick={() => {
+                const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
+                if (textarea) {
+                  textarea.value = "What is the weather today?";
+                  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                  textarea.focus();
+                }
+              }}>
+                Ask: "What is the weather today?"
+              </button>
+              <button className={styles.suggestBtn} onClick={() => {
+                const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
+                if (textarea) {
+                  textarea.value = "Search the web for latest AI news";
+                  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                  textarea.focus();
+                }
+              }}>
+                Ask: "Search the web for latest AI news"
+              </button>
+            </div>
           </div>
         ) : (
           messages.map((m) => (

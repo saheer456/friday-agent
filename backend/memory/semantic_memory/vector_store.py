@@ -36,41 +36,34 @@ async def _sb_add_memory(memory_id: int, text: str, category: str,
     from backend.supabase_client import get_client
     sb = await get_client()
     if sb is None:
-        return
-    try:
-        await (
-            sb.table("memory_embeddings")
-            .upsert({
-                "id":        memory_id,
-                "embedding": vector,
-                "text":      text[:2000],
-                "category":  category,
-                "importance": importance,
-            })
-            .execute()
-        )
-    except Exception as e:
-        logger.error(f"[VectorStore] Supabase upsert failed: {e}")
+        raise RuntimeError("Supabase client unavailable")
+    await (
+        sb.table("memory_embeddings")
+        .upsert({
+            "id":        memory_id,
+            "embedding": vector,
+            "text":      text[:2000],
+            "category":  category,
+            "importance": importance,
+        })
+        .execute()
+    )
 
 
 async def _sb_search(query_vector: List[float], limit: int) -> List[Dict]:
     from backend.supabase_client import get_client
     sb = await get_client()
     if sb is None:
-        return []
-    try:
-        res = await sb.rpc(
-            "match_memories",
-            {
-                "query_embedding": query_vector,
-                "match_threshold": 0.4,
-                "match_count":     limit,
-            },
-        ).execute()
-        return res.data or []
-    except Exception as e:
-        logger.error(f"[VectorStore] Supabase search failed: {e}")
-        return []
+        raise RuntimeError("Supabase client unavailable")
+    res = await sb.rpc(
+        "match_memories",
+        {
+            "query_embedding": query_vector,
+            "match_threshold": 0.4,
+            "match_count":     limit,
+        },
+    ).execute()
+    return res.data or []
 
 
 # ── ChromaDB fallback backend ─────────────────────────────────────────────────
@@ -94,7 +87,11 @@ def init_chroma_sync() -> None:
 def is_ready() -> bool:
     if _use_supabase():
         from backend.supabase_client import is_available
-        return is_available()
+        try:
+            if is_available():
+                return True
+        except Exception:
+            pass
     return _collection is not None
 
 
@@ -106,9 +103,15 @@ async def add_memory(memory_id: int, text: str, category: str, importance: float
         return
     try:
         vector = await embedder.embed_text(text)
+        supabase_success = False
         if _use_supabase():
-            await _sb_add_memory(memory_id, text, category, importance, vector)
-        else:
+            try:
+                await _sb_add_memory(memory_id, text, category, importance, vector)
+                supabase_success = True
+            except Exception as e:
+                logger.error(f"[VectorStore] Supabase add_memory failed, falling back to Chroma: {e}")
+        
+        if not supabase_success:
             if _collection is None:
                 return
 
@@ -128,18 +131,20 @@ async def add_memory(memory_id: int, text: str, category: str, importance: float
 
 async def search_memories(query_vector: List[float], limit: int = 3) -> List[Dict]:
     if _use_supabase():
-        rows = await _sb_search(query_vector, limit)
-        # Normalise Supabase RPC response to match ChromaDB shape
-        return [
-            {
-                "id":         r.get("id"),
-                "text":       r.get("text", ""),
-                "category":   r.get("category", "unknown"),
-                "importance": r.get("importance", 0.5),
-                "score":      r.get("similarity", 0.0),
-            }
-            for r in rows
-        ]
+        try:
+            rows = await _sb_search(query_vector, limit)
+            return [
+                {
+                    "id":         r.get("id"),
+                    "text":       r.get("text", ""),
+                    "category":   r.get("category", "unknown"),
+                    "importance": r.get("importance", 0.5),
+                    "score":      r.get("similarity", 0.0),
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.error(f"[VectorStore] Supabase search failed, falling back to ChromaDB: {e}")
 
     # ChromaDB path
     if _collection is None:

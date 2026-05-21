@@ -87,7 +87,7 @@ class CodeSkill(BaseSkill):
         },
         required=["task"],
     )
-    def generate_code(self, task: str, language: str = "python", context: str = "") -> SkillResult:
+    async def generate_code(self, task: str, language: str = "python", context: str = "") -> SkillResult:
         """Ask the LLM to write code. Returns the raw code string."""
         try:
             import httpx
@@ -110,8 +110,8 @@ class CodeSkill(BaseSkill):
                 "temperature": 0.2,
                 "max_tokens": 2048,
             }
-            with httpx.Client(timeout=30.0) as c:
-                r = c.post(url, headers={"Authorization": f"Bearer {api_key}"}, json=payload)
+            async with httpx.AsyncClient(timeout=30.0) as c:
+                r = await c.post(url, headers={"Authorization": f"Bearer {api_key}"}, json=payload)
                 r.raise_for_status()
             code = r.json()["choices"][0]["message"]["content"].strip()
             return SkillResult.ok(message="Code generated successfully.", data={"code": code, "language": language})
@@ -174,7 +174,7 @@ class CodeSkill(BaseSkill):
         },
         required=["code"],
     )
-    def analyse_code(self, code: str, language: str = "python") -> SkillResult:
+    async def analyse_code(self, code: str, language: str = "python") -> SkillResult:
         """Ask the LLM to explain and review a snippet."""
         try:
             import httpx
@@ -188,8 +188,8 @@ class CodeSkill(BaseSkill):
                 "temperature": 0.3,
                 "max_tokens": 1024,
             }
-            with httpx.Client(timeout=30.0) as c:
-                r = c.post(url, headers={"Authorization": f"Bearer {api_key}"}, json=payload)
+            async with httpx.AsyncClient(timeout=30.0) as c:
+                r = await c.post(url, headers={"Authorization": f"Bearer {api_key}"}, json=payload)
                 r.raise_for_status()
             analysis = r.json()["choices"][0]["message"]["content"].strip()
             return SkillResult.ok(message=analysis)
@@ -204,7 +204,7 @@ class CodeSkill(BaseSkill):
         },
         required=["code"],
     )
-    def fix_bugs(self, code: str, error: str = "") -> SkillResult:
+    async def fix_bugs(self, code: str, error: str = "") -> SkillResult:
         """Ask the LLM to fix the code and return the corrected version."""
         try:
             import httpx
@@ -223,8 +223,8 @@ class CodeSkill(BaseSkill):
                 "temperature": 0.2,
                 "max_tokens": 2048,
             }
-            with httpx.Client(timeout=30.0) as c:
-                r = c.post(url, headers={"Authorization": f"Bearer {api_key}"}, json=payload)
+            async with httpx.AsyncClient(timeout=30.0) as c:
+                r = await c.post(url, headers={"Authorization": f"Bearer {api_key}"}, json=payload)
                 r.raise_for_status()
             response = r.json()["choices"][0]["message"]["content"].strip()
             parts = response.split("---", 1)
