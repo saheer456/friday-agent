@@ -305,7 +305,11 @@ async def auth_me(credentials: HTTPAuthorizationCredentials | None = Security(_b
         return {"login_enabled": True, "authenticated": False, "user": None}
     try:
         user = await _verify_supabase_token(credentials.credentials)
-    except HTTPException:
+    except HTTPException as e:
+        print(f"[AUTH ERROR] Supabase token verification failed: {e.detail}")
+        return {"login_enabled": True, "authenticated": False, "user": None}
+    except Exception as e:
+        print(f"[AUTH ERROR] Unexpected error during token verification: {e}")
         return {"login_enabled": True, "authenticated": False, "user": None}
     return {
         "login_enabled": True,
