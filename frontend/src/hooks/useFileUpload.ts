@@ -12,14 +12,19 @@ export function useFileUpload() {
     }
   }, []);
 
-  const uploadFile = useCallback(async (file: File) => {
+  const uploadFile = useCallback(async (file: File, sessionId?: string) => {
     const MAX_MB = 20;
     if (file.size > MAX_MB * 1024 * 1024) {
       showToast(`File too large. Max ${MAX_MB} MB.`, 'error');
       return null;
     }
 
-    const ALLOWED = ['.pdf', '.docx', '.txt', '.md', '.csv', '.json'];
+    const ALLOWED = [
+      '.pdf', '.docx', '.txt', '.md', '.csv', '.json',
+      '.py', '.js', '.ts', '.tsx', '.jsx', '.html', '.css', 
+      '.sh', '.bat', '.sql', '.yaml', '.yml', '.toml', 
+      '.xml', '.ini', '.cfg', '.log', '.env'
+    ];
     const ext = '.' + file.name.split('.').pop()?.toLowerCase();
     if (!ALLOWED.includes(ext)) {
       showToast(`Unsupported type. Allowed: ${ALLOWED.join(', ')}`, 'error');
@@ -32,6 +37,9 @@ export function useFileUpload() {
     try {
       const fd = new FormData();
       fd.append('file', file);
+      if (sessionId) {
+        fd.append('session_id', sessionId);
+      }
       const res = await authFetch('/api/upload', { method: 'POST', body: fd });
       const data = await res.json();
 

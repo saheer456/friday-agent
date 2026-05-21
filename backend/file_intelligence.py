@@ -71,11 +71,23 @@ PARSERS = {
     ".json": _parse_json,
 }
 
+# Add support for code, configs, logs, env
+_code_extensions = [
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", 
+    ".sh", ".bat", ".sql", ".yaml", ".yml", ".toml", 
+    ".xml", ".ini", ".cfg", ".log", ".env"
+]
+for _ext in _code_extensions:
+    PARSERS[_ext] = _parse_txt
+
 def extract_text(filename: str, data: bytes) -> str:
     ext = Path(filename).suffix.lower()
     parser = PARSERS.get(ext)
     if not parser:
-        raise ValueError(f"Unsupported file type: {ext}")
+        try:
+            return _parse_txt(data)
+        except Exception:
+            raise ValueError(f"Unsupported file type: {ext}")
     return parser(data)
 
 
@@ -206,8 +218,11 @@ async def _ingest_chroma(filename: str, chunks: List[str], embedder) -> None:
 
 # ── Search ────────────────────────────────────────────────────────────────────
 
-async def search_files(query: str, limit: int = 4) -> List[str]:
+async def search_files(query: str, limit: int = 4, filenames: List[str] = None) -> List[str]:
     from backend.memory.semantic_memory import embedder
+
+    if filenames is not None and len(filenames) == 0:
+        return []
 
     if not embedder.is_ready():
         return []
@@ -215,11 +230,11 @@ async def search_files(query: str, limit: int = 4) -> List[str]:
     query_vector = await embedder.embed_text(query)
 
     if _use_supabase():
-        return await _search_supabase(query_vector, limit)
-    return await _search_chroma(query_vector, limit)
+        return await _search_supabase(query_vector, limit, filenames)
+    return await _search_chroma(query_vector, limit, filenames)
 
 
-async def _search_supabase(query_vector: List[float], limit: int) -> List[str]:
+async def _search_supabase(query_vector: List[float], limit: int, filenames: List[str] = None) -> List[str]:
     from backend.supabase_client import get_client
     sb = await get_client()
     if sb is None:
@@ -231,18 +246,21 @@ async def _search_supabase(query_vector: List[float], limit: int) -> List[str]:
                 "query_embedding": query_vector,
                 "match_threshold": 0.35,
                 "match_count":     limit,
+                "filter_filenames": filenames,
             },
         ).execute()
-        return [
-            f"[From: {r.get('filename', '?')}]\n{r.get('document', '')}"
-            for r in (res.data or [])
-        ]
+        
+        hits = []
+        for r in (res.data or []):
+            fname = r.get('filename', '?')
+            hits.append(f"[From: {fname}]\n{r.get('document', '')}")
+        return hits
     except Exception as e:
         logger.error(f"[FileIntelligence] Supabase search failed: {e}")
         return []
 
 
-async def _search_chroma(query_vector: List[float], limit: int) -> List[str]:
+async def _search_chroma(query_vector: List[float], limit: int, filenames: List[str] = None) -> List[str]:
     await _ensure_chroma()
     if _file_collection is None:
         return []
@@ -251,9 +269,18 @@ async def _search_chroma(query_vector: List[float], limit: int) -> List[str]:
             count = _file_collection.count()
             if count == 0:
                 return None
+            
+            where_filter = None
+            if filenames is not None:
+                if len(filenames) == 1:
+                    where_filter = {"filename": filenames[0]}
+                else:
+                    where_filter = {"filename": {"$in": filenames}}
+
             return _file_collection.query(
                 query_embeddings=[query_vector],
                 n_results=min(limit, count),
+                where=where_filter,
                 include=["documents", "metadatas", "distances"],
             )
 
@@ -275,3 +302,88 @@ async def _search_chroma(query_vector: List[float], limit: int) -> List[str]:
     except Exception as e:
         logger.error(f"[FileIntelligence] ChromaDB search failed: {e}")
         return []
+
+
+async def get_file_preview(filenames: List[str], limit: int = 3) -> List[str]:
+    if not filenames:
+        return []
+    if _use_supabase():
+        return await _preview_supabase(filenames, limit)
+    return await _preview_chroma(filenames, limit)
+
+
+async def _preview_supabase(filenames: List[str], limit: int) -> List[str]:
+    from backend.supabase_client import get_client
+    sb = await get_client()
+    if sb is None:
+        return []
+    try:
+        res = await sb.table("file_chunks") \
+            .select("filename, document, chunk_index") \
+            .in_("filename", filenames) \
+            .lt("chunk_index", limit) \
+            .order("chunk_index") \
+            .execute()
+        
+        return [
+            f"[From: {r.get('filename', '?')} (Preview)]\n{r.get('document', '')}"
+            for r in (res.data or [])
+        ]
+    except Exception as e:
+        logger.error(f"[FileIntelligence] Supabase preview failed: {e}")
+        return []
+
+
+async def _preview_chroma(filenames: List[str], limit: int) -> List[str]:
+    await _ensure_chroma()
+    if _file_collection is None:
+        return []
+    try:
+        def _get():
+            where_filter = None
+            if len(filenames) == 1:
+                where_filter = {
+                    "$and": [
+                        {"filename": filenames[0]},
+                        {"chunk": {"$lt": limit}}
+                    ]
+                }
+            else:
+                where_filter = {
+                    "$and": [
+                        {"filename": {"$in": filenames}},
+                        {"chunk": {"$lt": limit}}
+                    ]
+                }
+            return _file_collection.get(
+                where=where_filter,
+                include=["documents", "metadatas"]
+            )
+            
+        async with _chroma_lock:
+            results = await asyncio.to_thread(_get)
+            
+        if not results:
+            return []
+            
+        docs = results.get("documents", [])
+        metas = results.get("metadatas", [])
+        if not docs or not metas:
+            return []
+
+        combined = []
+        for i in range(len(docs)):
+            fname = metas[i].get("filename", "?")
+            chunk_idx = metas[i].get("chunk", 0)
+            combined.append((fname, chunk_idx, docs[i]))
+            
+        combined.sort(key=lambda x: (x[0], x[1]))
+        
+        return [
+            f"[From: {item[0]} (Preview)]\n{item[2]}"
+            for item in combined
+        ]
+    except Exception as e:
+        logger.error(f"[FileIntelligence] ChromaDB preview failed: {e}")
+        return []
+

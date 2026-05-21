@@ -19,7 +19,7 @@ logger = logging.getLogger("Brain")
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
-conversation_history: list[dict] = []
+conversation_histories: dict[str, list[dict]] = {}
 MAX_HISTORY = 6
 _history_lock = asyncio.Lock()
 
@@ -62,7 +62,7 @@ def _is_smalltalk(msg: str) -> bool:
     return False
 
 
-async def _get_context(user_message: str) -> str:
+async def _get_context(user_message: str, session_id: str = "default-session") -> str:
     from . import rag
     parts = []
     try:
@@ -73,20 +73,29 @@ async def _get_context(user_message: str) -> str:
         logger.debug(f"RAG search error: {e}")
 
     try:
-        from .file_intelligence import search_files
-        file_hits = await search_files(user_message, limit=3)
-        if file_hits:
-            parts.append("UPLOADED DOCUMENT CONTEXT:\n" + "\n\n---\n".join(file_hits))
+        from .memory import chat_history
+        session_files = await chat_history.get_session_files(session_id)
+        if session_files:
+            from .file_intelligence import search_files, get_file_preview
+            file_hits = await search_files(user_message, filenames=session_files, limit=3)
+            if not file_hits:
+                file_hits = await get_file_preview(session_files, limit=3)
+            if file_hits:
+                parts.append("UPLOADED DOCUMENT CONTEXT:\n" + "\n\n---\n".join(file_hits))
     except Exception as e:
         logger.debug(f"File search error: {e}")
 
     return "\n\n".join(parts)
 
 
-async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool):
+async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, emit_phases: bool):
     from .memory import MemoryManager
     from .events import event_bus
     from .memory.tool_memory import tool_memory
+    from .memory import chat_history
+
+    if not session_id:
+        session_id = "default-session"
 
     if emit_phases:
         await event_bus.emit("thinking_started", {"message": user_message})
@@ -102,7 +111,7 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
     try:
         passive_context = ""
         try:
-            passive_context = await _get_context(user_message)
+            passive_context = await _get_context(user_message, session_id)
             recalled = await MemoryManager.retrieve_context(user_message)
             if recalled:
                 passive_context = f"{recalled}\n\n{passive_context}".strip()
@@ -119,19 +128,21 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
             logger.error(f"Context retrieval error: {e}")
             passive_context = ""
 
-        # Load from DB if in-memory history is empty (e.g. after server restart)
-        if not conversation_history:
-            try:
-                from .memory import chat_history
-                db_history = await chat_history.get_latest_chat_messages(limit=16)
-                conversation_history.extend(db_history)
-            except Exception as e:
-                logger.error(f"Error loading chat history from DB: {e}")
+        # Load from DB if in-memory history is empty
+        async with _history_lock:
+            if session_id not in conversation_histories:
+                conversation_histories[session_id] = []
+                try:
+                    db_history = await chat_history.get_latest_chat_messages(session_id, limit=16)
+                    conversation_histories[session_id].extend(db_history)
+                except Exception as e:
+                    logger.error(f"Error loading chat history from DB: {e}")
 
-        conversation_history.append({"role": "user", "content": user_message})
+            session_history = conversation_histories[session_id]
+
+        session_history.append({"role": "user", "content": user_message})
         try:
-            from .memory import chat_history
-            await chat_history.save_chat_message("user", user_message)
+            await chat_history.save_chat_message(session_id, "user", user_message)
         except Exception as e:
             logger.error(f"Error saving user message to DB: {e}")
 
@@ -170,7 +181,7 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
         if passive_context:
             system_content += f"\n\nCONTEXT:\n{passive_context}"
 
-        messages = [{"role": "system", "content": system_content}, *conversation_history]
+        messages = [{"role": "system", "content": system_content}, *session_history]
 
         if emit_phases:
             yield (
@@ -196,7 +207,7 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
             if time.monotonic() - turn_start > turn_timeout:
                 yield ("error", "[System] Tool execution timed out.")
                 yield ("text", "I'm sorry, that took too long.")
-                conversation_history.append({"role": "assistant", "content": "[Response timed out]"})
+                session_history.append({"role": "assistant", "content": "[Response timed out]"})
                 break
 
             tools_payload = tool_bridge.get_tools_payload()
@@ -250,7 +261,7 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
 
             if last_error and not full_response and not tool_calls_accumulator:
                 msg = "I encountered a temporary issue. Please try again."
-                conversation_history.append({"role": "assistant", "content": msg})
+                session_history.append({"role": "assistant", "content": msg})
                 if emit_phases:
                     yield ("phase", {"id": "fault", "title": "Subsystem fault", "detail": last_error})
                 yield ("error", msg)
@@ -265,7 +276,7 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
                     "tool_calls": tool_calls,
                 }
                 messages.append(assistant_msg)
-                conversation_history.append(assistant_msg)
+                session_history.append(assistant_msg)
 
                 if emit_phases:
                     yield (
@@ -354,17 +365,16 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
                         "tool_call_id": tc_id,
                         "content": res_str,
                     })
-                    conversation_history.append({"role": "tool", "tool_call_id": tc_id, "content": res_str})
+                    session_history.append({"role": "tool", "tool_call_id": tc_id, "content": res_str})
 
                     await event_bus.emit("tool_finished", {"tool": fn_name, "success": not is_failure})
 
                 continue
             else:
                 if full_response and not full_response.startswith("[Error:"):
-                    conversation_history.append({"role": "assistant", "content": full_response})
+                    session_history.append({"role": "assistant", "content": full_response})
                     try:
-                        from .memory import chat_history
-                        await chat_history.save_chat_message("assistant", full_response)
+                        await chat_history.save_chat_message(session_id, "assistant", full_response)
                     except Exception as e:
                         logger.error(f"Error saving assistant message to DB: {e}")
                     if not _is_smalltalk(user_message):
@@ -375,11 +385,11 @@ async def _iter_chat_turn(user_message: str, voice_mode: bool, emit_phases: bool
             yield ("error", "[System] Tool loop exhausted.")
             yield ("text", "I'm sorry, I used too many tools.")
     finally:
-        conversation_history[:] = conversation_history[-MAX_HISTORY:]
+        session_history[:] = session_history[-MAX_HISTORY:]
 
 
-async def iter_chat_sse_events(user_message: str, voice_mode: bool = False):
-    async for kind, payload in _iter_chat_turn(user_message, voice_mode, emit_phases=True):
+async def iter_chat_sse_events(user_message: str, session_id: str = "default-session", voice_mode: bool = False):
+    async for kind, payload in _iter_chat_turn(user_message, session_id, voice_mode, emit_phases=True):
         if kind == "phase":
             yield {"type": "phase", **payload}
         elif kind == "text":
@@ -388,8 +398,8 @@ async def iter_chat_sse_events(user_message: str, voice_mode: bool = False):
             yield {"type": "error", "message": payload}
 
 
-async def stream_response(user_message: str, voice_mode: bool = False):
-    async for kind, payload in _iter_chat_turn(user_message, voice_mode, emit_phases=False):
+async def stream_response(user_message: str, session_id: str = "default-session", voice_mode: bool = False):
+    async for kind, payload in _iter_chat_turn(user_message, session_id, voice_mode, emit_phases=False):
         if kind == "text":
             yield payload
         elif kind == "error":

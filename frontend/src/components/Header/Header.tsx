@@ -1,21 +1,34 @@
 import styles from './Header.module.css';
-import { Activity, Database, LogOut } from 'lucide-react';
+import { Activity, Database, LogOut, Menu } from 'lucide-react';
 
 interface HeaderProps {
   version: string;
   statusText: string;
   isBusy: boolean;
+  isSpeaking?: boolean;
   onClearChat: () => void;
   onToggleTelemetry: () => void;
   onToggleMemories: () => void;
   onLogout: () => void;
+  onToggleSidebar?: () => void;
   fullAccess?: boolean;
 }
 
-export function Header({ version, statusText, isBusy, onClearChat, onToggleTelemetry, onToggleMemories, onLogout, fullAccess = true }: HeaderProps) {
+export function Header({ version, statusText, isBusy, isSpeaking = false, onClearChat, onToggleTelemetry, onToggleMemories, onLogout, onToggleSidebar, fullAccess = true }: HeaderProps) {
   return (
     <header className={styles.header}>
-      <div className={styles.logoRing}>
+      {onToggleSidebar && (
+        <button
+          type="button"
+          className={styles.btnSidebarToggle}
+          onClick={onToggleSidebar}
+          aria-label="Toggle chat history"
+          title="Toggle chat history"
+        >
+          <Menu size={20} />
+        </button>
+      )}
+      <div className={`${styles.logoRing} ${isSpeaking ? styles.speaking : ''}`}>
         <div className={styles.logoCore}></div>
       </div>
       <div className={styles.titles}>

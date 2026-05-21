@@ -29,7 +29,7 @@ from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 load_dotenv(ROOT / "friday-agent.env")
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Security
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -131,9 +131,9 @@ async def verify_auth(credentials: HTTPAuthorizationCredentials | None = Securit
 
 
 def _ui_info() -> dict:
-    version = (os.getenv("FRIDAY_UI_VERSION") or "v2.1 Sentinel").strip()
+    version = (os.getenv("FRIDAY_UI_VERSION") or "v2.6 Sentinel").strip()
     if not version:
-        version = "v2.1 Sentinel"
+        version = "v2.6 Sentinel"
     return {"version": version}
 
 
@@ -290,6 +290,7 @@ async def _ping_edge_tts():
 
 class ChatBody(BaseModel):
     message: str = Field(..., min_length=1, max_length=16_000)
+    session_id: str = Field(default="default-session", max_length=100)
     voice_mode: bool = False
 
 
@@ -347,12 +348,14 @@ async def health():
 @app.get("/api/system")
 async def system_info():
     """Voice stack + LLM routing (HUD)."""
+    # Count total turns in default or all active session histories
+    history_turns = sum(len(h) for h in brain.conversation_histories.values()) if brain.conversation_histories else 0
     return {
         "ui": _ui_info(),
         "voice": _voice_stack_info(),
         "llm": _llm_stack_info(),
         "readiness": _readiness_info(),
-        "history_turns": len(brain.conversation_history),
+        "history_turns": history_turns,
     }
 
 
@@ -373,7 +376,7 @@ async def chat_stream(body: ChatBody, _auth: dict = Depends(verify_auth)):
 
     async def event_gen():
         try:
-            async for ev in brain.iter_chat_sse_events(body.message.strip(), voice_mode=body.voice_mode):
+            async for ev in brain.iter_chat_sse_events(body.message.strip(), session_id=body.session_id, voice_mode=body.voice_mode):
                 if ev.get("type") == "error" and "message" in ev:
                     ev["message"] = _friendly_error(ev["message"])
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
@@ -464,11 +467,21 @@ async def limited_chat_stream(body: LimitedChatBody, _auth: dict = Depends(verif
 
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...), _auth: dict = Depends(verify_auth)):
-    """Ingest a file into FRIDAY's semantic knowledge base."""
+async def upload_file(
+    file: UploadFile = File(...),
+    session_id: str = Form("default-session"),
+    _auth: dict = Depends(verify_auth)
+):
+    """Ingest a file into FRIDAY's semantic knowledge base and associate with a chat session."""
     from backend.file_intelligence import ingest_file
+    from backend.memory import chat_history
 
-    ALLOWED = {".pdf", ".docx", ".txt", ".md", ".csv", ".json"}
+    ALLOWED = {
+        ".pdf", ".docx", ".txt", ".md", ".csv", ".json",
+        ".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", 
+        ".sh", ".bat", ".sql", ".yaml", ".yml", ".toml", 
+        ".xml", ".ini", ".cfg", ".log", ".env"
+    }
     ext = "." + (file.filename or "").rsplit(".", 1)[-1].lower()
     if ext not in ALLOWED:
         raise HTTPException(
@@ -485,18 +498,89 @@ async def upload_file(file: UploadFile = File(...), _auth: dict = Depends(verify
     if result.get("status") == "error":
         raise HTTPException(status_code=422, detail=result["error"])
 
+    try:
+        await chat_history.associate_file_with_session(session_id, file.filename)
+    except Exception as e:
+        print(f"[SERVER] Failed to associate file with session {session_id}: {e}")
+
     return result
 
 
-@app.post("/api/clear")
-async def clear_history(_auth: dict = Depends(verify_auth)):
-    brain.conversation_history.clear()
+@app.delete("/api/sessions/{session_id}/files/{filename:path}")
+async def unlink_file_from_session(session_id: str, filename: str, _auth: dict = Depends(verify_auth)):
     try:
         from backend.memory import chat_history
-        await chat_history.clear_chat_history()
+        await chat_history.remove_file_from_session(session_id, filename)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/clear")
+
+async def clear_history(session_id: str | None = None, _auth: dict = Depends(verify_auth)):
+    if session_id:
+        if session_id in brain.conversation_histories:
+            brain.conversation_histories[session_id].clear()
+    else:
+        brain.conversation_histories.clear()
+
+    try:
+        from backend.memory import chat_history
+        await chat_history.clear_chat_history(session_id)
     except Exception as e:
         print(f"[SERVER] Failed to clear DB chat history: {e}")
     return {"ok": True}
+
+
+class SessionCreateBody(BaseModel):
+    id: str
+    title: str
+
+
+class SessionUpdateBody(BaseModel):
+    title: str
+
+
+@app.get("/api/sessions")
+async def list_sessions(_auth: dict = Depends(verify_auth)):
+    from backend.memory import chat_history
+    sessions = await chat_history.get_sessions()
+    if not sessions:
+        await chat_history.create_session("default-session", "Default Chat")
+        sessions = await chat_history.get_sessions()
+    return {"sessions": sessions}
+
+
+@app.post("/api/sessions")
+async def create_session(body: SessionCreateBody, _auth: dict = Depends(verify_auth)):
+    from backend.memory import chat_history
+    await chat_history.create_session(body.id, body.title)
+    return {"ok": True, "id": body.id, "title": body.title}
+
+
+@app.put("/api/sessions/{session_id}")
+async def update_session_title(session_id: str, body: SessionUpdateBody, _auth: dict = Depends(verify_auth)):
+    from backend.memory import chat_history
+    await chat_history.update_session_title(session_id, body.title)
+    return {"ok": True}
+
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: str, _auth: dict = Depends(verify_auth)):
+    from backend.memory import chat_history
+    await chat_history.delete_session(session_id)
+    if session_id in brain.conversation_histories:
+        del brain.conversation_histories[session_id]
+    return {"ok": True}
+
+
+@app.get("/api/sessions/{session_id}/messages")
+async def get_session_messages(session_id: str, _auth: dict = Depends(verify_auth)):
+    from backend.memory import chat_history
+    messages = await chat_history.get_latest_chat_messages(session_id, limit=100)
+    files = await chat_history.get_session_files(session_id)
+    return {"messages": messages, "files": files}
 
 
 class MemoryAddBody(BaseModel):

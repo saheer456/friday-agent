@@ -38,7 +38,7 @@ class MemoryManager:
 
         # 2. Evaluate
         exchange_text = f"User: {user_msg}\nAssistant: {ai_response}"
-        importance, category = await memory_ranker.evaluate_and_categorize(exchange_text)
+        importance, category = memory_ranker.evaluate_and_categorize(exchange_text)
 
         # 3. Persist important memories to both stores
         if importance >= 0.4:

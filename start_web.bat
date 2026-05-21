@@ -7,7 +7,7 @@ cd /d "%~dp0"
 echo.
 echo  ============================================================
 echo    F . R . I . D . A . Y   ^|  Full Responsive Interface
-echo    Networked Assistant for You  ^|  v2.0 Sentinel
+echo    Networked Assistant for You  ^|  v2.6 Sentinel
 echo  ============================================================
 echo.
 

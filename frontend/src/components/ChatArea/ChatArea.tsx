@@ -110,6 +110,7 @@ export function ChatArea({ messages, isSpeaking, onDropFile }: ChatAreaProps) {
           <div className={styles.speakingCircle}>
             <div className={styles.speakingCircleInner}></div>
           </div>
+          <span className={styles.speakingText}>FRIDAY is speaking...</span>
         </div>
       )}
     </div>

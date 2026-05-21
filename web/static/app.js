@@ -400,7 +400,7 @@ async function loadSystem() {
 
     // Version pill
     const ui = d.ui || {};
-    if (versionTag) versionTag.textContent = ui.version || "v2.0 Sentinel";
+    if (versionTag) versionTag.textContent = ui.version || "v2.6 Sentinel";
 
     // Readiness badges
     const rd = d.readiness || {};
@@ -427,7 +427,7 @@ async function loadSystem() {
       ["Turns", String(d.history_turns ?? 0)],
     ]);
   } catch {
-    if (versionTag) versionTag.textContent = "v2.0 Sentinel";
+    if (versionTag) versionTag.textContent = "v2.6 Sentinel";
     voiceStack.innerHTML = "<p class='ph-detail'>Could not load stack info.</p>";
   }
 }
@@ -609,7 +609,12 @@ async function _handleFileUpload(file) {
     return;
   }
 
-  const ALLOWED = ['.pdf', '.docx', '.txt', '.md', '.csv', '.json'];
+  const ALLOWED = [
+    '.pdf', '.docx', '.txt', '.md', '.csv', '.json',
+    '.py', '.js', '.ts', '.tsx', '.jsx', '.html', '.css', 
+    '.sh', '.bat', '.sql', '.yaml', '.yml', '.toml', 
+    '.xml', '.ini', '.cfg', '.log', '.env'
+  ];
   const ext = '.' + file.name.split('.').pop().toLowerCase();
   if (!ALLOWED.includes(ext)) {
     _showUploadToast(`Unsupported type. Allowed: ${ALLOWED.join(', ')}`, 'error');

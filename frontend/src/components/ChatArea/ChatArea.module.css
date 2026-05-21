@@ -192,36 +192,61 @@
 }
 @keyframes blink { 50% { opacity: 0; } }
 
-/* ── Speaking indicator — large circle matching screenshot ─── */
+/* ── Speaking indicator — sleek horizontal bar at the bottom ─── */
 .speakingIndicator {
-  position: absolute;
-  bottom: 60px;
-  left: 50%;
-  transform: translateX(-50%);
-  pointer-events: none;
-}
-.speakingCircle {
-  width: 160px;
-  height: 160px;
-  border-radius: 50%;
-  border: 2px solid rgba(107, 112, 102, 0.25);
-  background: rgba(250, 246, 240, 0.85);
   display: flex;
   align-items: center;
   justify-content: center;
-  transform: scale(calc(0.9 + var(--voice-volume, 0) * 0.006));
-  transition: transform 0.05s ease-out;
-  backdrop-filter: blur(4px);
+  gap: 14px;
+  padding: 10px 24px;
+  background: var(--bg1);
+  border-top: 1px solid var(--outline);
+  border-bottom: 1px solid var(--outline);
+  backdrop-filter: blur(10px);
+  animation: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  flex-shrink: 0;
 }
-.speakingCircleInner {
-  width: 100px;
-  height: 100px;
+
+@keyframes slide-up {
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.speakingCircle {
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
-  background: rgba(107, 112, 102, 0.12);
-  transform: scale(calc(0.85 + var(--voice-volume, 0) * 0.01));
+  border: 2px solid var(--primary-border);
+  background: var(--primary-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 10px rgba(74, 124, 89, 0.15);
+  transform: scale(calc(1 + var(--voice-volume, 0) * 0.008));
+  transition: transform 0.05s ease-out;
+  animation: core-glow 2s infinite alternate;
+}
+
+.speakingCircleInner {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 8px rgba(74, 124, 89, 0.3);
+  transform: scale(calc(0.9 + var(--voice-volume, 0) * 0.015));
   transition: transform 0.05s ease-out;
 }
-@keyframes circle-pulse {
-  0%, 100% { transform: scale(0.95); opacity: 0.7; }
-  50%       { transform: scale(1.03); opacity: 1; }
+
+.speakingText {
+  font-family: var(--font-head);
+  font-size: 0.9rem;
+  font-style: italic;
+  font-weight: 600;
+  color: var(--primary);
+  letter-spacing: 0.5px;
+}
+
+@keyframes core-glow {
+  0% { box-shadow: 0 0 8px rgba(74, 124, 89, 0.15); border-color: var(--primary-border); }
+  100% { box-shadow: 0 0 16px rgba(74, 124, 89, 0.45); border-color: var(--primary); }
 }

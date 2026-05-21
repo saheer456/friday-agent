@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { Message, Phase } from '../types/api';
 import { authFetch } from '../lib/api';
 import { clearLocalMemory, retrieveLocalMemory, saveLocalMemory } from '../lib/localMemory';
@@ -17,16 +17,113 @@ export function useChat(
   const [isBusy, setIsBusy] = useState(false);
   const { limitedMode = false } = options;
 
+  // Session states
+  const [sessions, setSessions] = useState<{ id: string; title: string; created_at?: string }[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string>('default-session');
+  const [activeSessionFiles, setActiveSessionFiles] = useState<string[]>([]);
+
   const addSystemMessage = useCallback((text: string) => {
     setMessages(prev => [...prev, { id: Date.now().toString(), role: 'assistant', content: text, streaming: false }]);
   }, []);
+
+  const fetchSessions = useCallback(async () => {
+    if (limitedMode) return;
+    try {
+      const res = await authFetch('/api/sessions');
+      if (res.ok) {
+        const data = await res.json();
+        setSessions(data.sessions || []);
+      }
+    } catch (e) {
+      console.error('Error fetching sessions:', e);
+    }
+  }, [limitedMode]);
+
+  const selectSession = useCallback(async (sessionId: string) => {
+    setActiveSessionId(sessionId);
+    if (limitedMode) return;
+    try {
+      const res = await authFetch(`/api/sessions/${sessionId}/messages`);
+      if (res.ok) {
+        const data = await res.json();
+        const mappedMessages = (data.messages || []).map((m: any, idx: number) => ({
+          id: `m-${sessionId}-${idx}`,
+          role: m.role,
+          content: m.content,
+          streaming: false,
+        }));
+        setMessages(mappedMessages.length > 0 ? mappedMessages : [{
+          id: `m-${sessionId}-welcome`,
+          role: 'assistant',
+          content: 'Session connected, sir. Ask anything when ready.',
+          streaming: false,
+        }]);
+        setActiveSessionFiles(data.files || []);
+      }
+    } catch (e) {
+      console.error('Error loading session messages:', e);
+    }
+  }, [limitedMode]);
+
+  const createSession = useCallback(async (title?: string) => {
+    if (limitedMode) return;
+    const newId = `session-${Date.now()}`;
+    try {
+      const res = await authFetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: newId, title: title || 'New Chat' }),
+      });
+      if (res.ok) {
+        await fetchSessions();
+        await selectSession(newId);
+      }
+    } catch (e) {
+      console.error('Error creating session:', e);
+    }
+  }, [limitedMode, fetchSessions, selectSession]);
+
+  const deleteSession = useCallback(async (sessionId: string) => {
+    if (limitedMode) return;
+    try {
+      const res = await authFetch(`/api/sessions/${sessionId}`, { method: 'DELETE' });
+      if (res.ok) {
+        const remaining = sessions.filter(s => s.id !== sessionId);
+        setSessions(remaining);
+        
+        const nextSessionId = remaining.length > 0 ? remaining[0].id : 'default-session';
+        await selectSession(nextSessionId);
+        await fetchSessions();
+      }
+    } catch (e) {
+      console.error('Error deleting session:', e);
+    }
+  }, [limitedMode, sessions, fetchSessions, selectSession]);
+
+  const renameSession = useCallback(async (sessionId: string, newTitle: string) => {
+    if (limitedMode) return;
+    try {
+      const res = await authFetch(`/api/sessions/${sessionId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newTitle }),
+      });
+      if (res.ok) {
+        await fetchSessions();
+        // Update local session title if it's the active one or just to reflect change in real time
+        setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, title: newTitle } : s));
+      }
+    } catch (e) {
+      console.error('Error renaming session:', e);
+    }
+  }, [limitedMode, fetchSessions]);
 
   const clearChat = useCallback(async () => {
     try {
       if (limitedMode) {
         clearLocalMemory();
       } else {
-        await authFetch('/api/clear', { method: 'POST' });
+        await authFetch('/api/clear' + (activeSessionId ? `?session_id=${activeSessionId}` : ''), { method: 'POST' });
       }
       setMessages([{
         id: Date.now().toString(),
@@ -37,11 +134,21 @@ export function useChat(
         streaming: false,
       }]);
       setPhases([]);
+      setActiveSessionFiles([]);
       onStatusChange('Online', false);
     } catch {
       onStatusChange('Clear failed', false);
     }
-  }, [limitedMode, onStatusChange]);
+  }, [limitedMode, activeSessionId, onStatusChange]);
+
+  // Fetch sessions list and select default session on mount
+  useEffect(() => {
+    if (!limitedMode) {
+      fetchSessions().then(() => {
+        selectSession('default-session');
+      });
+    }
+  }, [limitedMode]);
 
   const sendMessage = useCallback(async (text: string, isVoiceMode: boolean) => {
     if (!text.trim()) return;
@@ -49,7 +156,6 @@ export function useChat(
     const userMsgId = `u-${Date.now()}`;
     const aiMsgId   = `a-${Date.now()}`;
 
-    // Add user + empty AI message in one update to avoid race
     setMessages(prev => [
       ...prev,
       { id: userMsgId, role: 'user',      content: text, streaming: false },
@@ -64,7 +170,7 @@ export function useChat(
       const endpoint = limitedMode ? '/api/chat/limited/stream' : '/api/chat/stream';
       const payload = limitedMode
         ? { message: text, local_context: retrieveLocalMemory(text) }
-        : { message: text, voice_mode: isVoiceMode };
+        : { message: text, voice_mode: isVoiceMode, session_id: activeSessionId };
       const res = await authFetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -96,10 +202,8 @@ export function useChat(
 
           const data = raw.slice(5).trim();
 
-          // ── Stream finished ─────────────────────────────────
           if (data === '[DONE]') {
             streamDone = true;
-            // Capture fullText in local so functional updater is pure
             const finalText = fullText;
             setMessages(prev =>
               prev.map(m => m.id === aiMsgId ? { ...m, streaming: false, content: finalText } : m)
@@ -111,7 +215,6 @@ export function useChat(
             break outer;
           }
 
-          // ── Parse SSE event ─────────────────────────────────
           let obj: any;
           try { obj = JSON.parse(data); }
           catch { continue; }
@@ -124,7 +227,6 @@ export function useChat(
           }
 
           if (obj.type === 'token' && obj.text) {
-            // Capture the token text immediately — do NOT reference obj inside the updater
             const chunk = String(obj.text);
             if (!sawToken) {
               sawToken = true;
@@ -158,7 +260,39 @@ export function useChat(
       setIsBusy(false);
       onStatusChange('Online', false);
     }
-  }, [limitedMode, onStatusChange, queueTTS]);
+  }, [limitedMode, activeSessionId, onStatusChange, queueTTS]);
 
-  return { messages, phases, isBusy, sendMessage, clearChat, addSystemMessage };
+  const unlinkFile = useCallback(async (filename: string) => {
+    if (limitedMode) return;
+    try {
+      const res = await authFetch(`/api/sessions/${activeSessionId}/files/${encodeURIComponent(filename)}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        setActiveSessionFiles(prev => prev.filter(f => f !== filename));
+      }
+    } catch (e) {
+      console.error('Error unlinking file:', e);
+    }
+  }, [limitedMode, activeSessionId]);
+
+  return {
+    messages,
+    phases,
+    isBusy,
+    sendMessage,
+    clearChat,
+    addSystemMessage,
+    sessions,
+    activeSessionId,
+    activeSessionFiles,
+    fetchSessions,
+    selectSession,
+    createSession,
+    deleteSession,
+    renameSession,
+    unlinkFile,
+    setActiveSessionFiles
+  };
 }
+

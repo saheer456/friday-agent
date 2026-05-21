@@ -19,6 +19,7 @@ class ProviderManager:
         self._fallback_order: list[str] = []
         self._rate_limiters: dict[str, float] = {}
         self._health_cache: dict[str, tuple[bool, float]] = {}
+        self._rate_limited_until: dict[str, float] = {}
 
     def register(self, name: str, provider: BaseProvider) -> None:
         self._providers[name] = provider
@@ -77,12 +78,7 @@ class ProviderManager:
         if not self._providers:
             self._discover_providers()
 
-        if is_heavy and "cerebras" in self._fallback_order:
-            order = list(self._fallback_order)
-            order.remove("cerebras")
-            order.insert(0, "cerebras")
-        else:
-            order = list(self._fallback_order)
+        order = list(self._fallback_order)
 
         last_error = ""
         for provider_name in order:
@@ -91,7 +87,10 @@ class ProviderManager:
                 continue
 
             if provider.status == ProviderStatus.RATE_LIMITED:
-                continue
+                until = self._rate_limited_until.get(provider_name, 0.0)
+                if time.monotonic() < until:
+                    continue
+                provider.status = ProviderStatus.HEALTHY
 
             while not self._check_rate_limit(provider_name):
                 await asyncio.sleep(0.05)
@@ -107,6 +106,7 @@ class ProviderManager:
 
                     if "429" in str(e) or "rate" in str(e).lower():
                         provider.status = ProviderStatus.RATE_LIMITED
+                        self._rate_limited_until[provider_name] = time.monotonic() + 60.0
                         wait = 2 ** (attempt + 1)
                         await asyncio.sleep(wait)
                         continue
@@ -129,12 +129,7 @@ class ProviderManager:
         if not self._providers:
             self._discover_providers()
 
-        if is_heavy and "cerebras" in self._fallback_order:
-            order = list(self._fallback_order)
-            order.remove("cerebras")
-            order.insert(0, "cerebras")
-        else:
-            order = list(self._fallback_order)
+        order = list(self._fallback_order)
 
         last_error = ""
         for provider_name in order:
@@ -143,7 +138,10 @@ class ProviderManager:
                 continue
 
             if provider.status == ProviderStatus.RATE_LIMITED:
-                continue
+                until = self._rate_limited_until.get(provider_name, 0.0)
+                if time.monotonic() < until:
+                    continue
+                provider.status = ProviderStatus.HEALTHY
 
             while not self._check_rate_limit(provider_name):
                 await asyncio.sleep(0.05)
@@ -167,6 +165,7 @@ class ProviderManager:
 
                     if "429" in str(e) or "rate" in str(e).lower():
                         provider.status = ProviderStatus.RATE_LIMITED
+                        self._rate_limited_until[provider_name] = time.monotonic() + 60.0
                         wait = 2 ** (attempt + 1)
                         await asyncio.sleep(wait)
                         continue

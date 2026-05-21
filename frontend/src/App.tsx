@@ -4,6 +4,7 @@ import { ChatArea } from './components/ChatArea/ChatArea';
 import { Composer } from './components/Composer/Composer';
 import { Telemetry } from './components/Telemetry/Telemetry';
 import { Memories } from './components/Memories/Memories';
+import { Sidebar } from './components/Sidebar/Sidebar';
 import { useSystem } from './hooks/useSystem';
 import { useChat } from './hooks/useChat';
 import { useVoice } from './hooks/useVoice';
@@ -13,6 +14,7 @@ import styles from './App.module.css';
 
 function App() {
   const [statusText, setStatusText] = useState('Online');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [telemetryOpen, setTelemetryOpen] = useState(false);
   const [memoriesOpen, setMemoriesOpen] = useState(false);
   const [interimText, setInterimText] = useState('');
@@ -60,8 +62,23 @@ function App() {
     toggleRecording();
   };
 
-  const { messages, phases, isBusy: chatBusy, sendMessage, clearChat, addSystemMessage } =
-    useChat(handleStatusChange, hasFullAccess ? queueTTS : () => {}, { limitedMode });
+  const {
+    messages,
+    phases,
+    isBusy: chatBusy,
+    sendMessage,
+    clearChat,
+    addSystemMessage,
+    sessions,
+    activeSessionId,
+    activeSessionFiles,
+    selectSession,
+    createSession,
+    deleteSession,
+    renameSession,
+    unlinkFile,
+    setActiveSessionFiles,
+  } = useChat(handleStatusChange, hasFullAccess ? queueTTS : () => {}, { limitedMode });
 
   const handleSend = async (text: string, isVoiceMode: boolean) => {
     stopAudio();
@@ -69,15 +86,18 @@ function App() {
   };
 
   const handleUpload = async (file: File) => {
-    const data = await uploadState.uploadFile(file);
+    const data = await uploadState.uploadFile(file, activeSessionId);
     if (data) {
       addSystemMessage(
-        `I've ingested **${data.filename}** into my knowledge base, sir. ` +
+        `I've ingested **${data.filename}** into the active dialogue channel, sir. ` +
         `It's been split into ${data.chunks} searchable chunks (~${data.words} words total). ` +
-        `You can now ask me questions about its contents.`
+        `You can now ask me questions isolated specifically to this session's context.`
       );
+      // Update session files directly to avoid resetting the chat transcript
+      setActiveSessionFiles(prev => [...prev.filter(f => f !== data.filename), data.filename]);
     }
   };
+
 
   const handleLogout = async () => {
     await supabase?.auth.signOut();
@@ -214,15 +234,28 @@ function App() {
 
   return (
     <div className={styles.layout}>
+      <Sidebar
+        isOpen={sidebarOpen}
+        onToggle={() => setSidebarOpen(o => !o)}
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        activeSessionFiles={activeSessionFiles}
+        onCreateSession={() => createSession()}
+        onSelectSession={selectSession}
+        onDeleteSession={deleteSession}
+        onRenameSession={renameSession}
+      />
       <div className={styles.mainCol}>
         <Header
-          version={system?.ui?.version || 'v2.1 Sentinel'}
+          version={system?.ui?.version || 'v2.6 Sentinel'}
           statusText={statusText}
           isBusy={chatBusy}
+          isSpeaking={isPlaying}
           onClearChat={clearChat}
           onToggleTelemetry={() => setTelemetryOpen(o => !o)}
           onToggleMemories={() => setMemoriesOpen(o => !o)}
           onLogout={handleLogout}
+          onToggleSidebar={() => setSidebarOpen(o => !o)}
           fullAccess={hasFullAccess}
         />
 
@@ -253,6 +286,8 @@ function App() {
               toastMessage: uploadState.toastMessage,
             }}
             interimText={interimText}
+            activeSessionFiles={activeSessionFiles}
+            onRemoveFile={unlinkFile}
           />
         </div>
 

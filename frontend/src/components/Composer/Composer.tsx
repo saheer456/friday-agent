@@ -13,9 +13,11 @@ interface ComposerProps {
   uploadState: { isUploading: boolean; toastMessage: { text: string; type: string } | null };
   interimText?: string;
   allowUpload?: boolean;
+  activeSessionFiles?: string[];
+  onRemoveFile?: (filename: string) => void;
 }
 
-export function Composer({ value, onChange, onSend, isBusy, isRecording, onToggleRecord, onUpload, uploadState, interimText, allowUpload = true }: ComposerProps) {
+export function Composer({ value, onChange, onSend, isBusy, isRecording, onToggleRecord, onUpload, uploadState, interimText, allowUpload = true, activeSessionFiles = [], onRemoveFile }: ComposerProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -50,7 +52,29 @@ export function Composer({ value, onChange, onSend, isBusy, isRecording, onToggl
 
   return (
     <div style={{ position: 'relative' }}>
+      {activeSessionFiles && activeSessionFiles.length > 0 && (
+        <div className={styles.attachedFiles}>
+          {activeSessionFiles.map((file, idx) => (
+            <div key={idx} className={styles.filePill} title={file}>
+              <Paperclip size={12} className={styles.filePillIcon} />
+              <span className={styles.filePillName}>{file}</span>
+              {onRemoveFile && (
+                <button
+                  type="button"
+                  className={styles.filePillRemove}
+                  onClick={() => onRemoveFile(file)}
+                  title="Remove document from context"
+                >
+                  &times;
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {uploadState.toastMessage && (
+
         <div className={`${styles.uploadToast} ${uploadState.toastMessage.type ? styles[uploadState.toastMessage.type] : ''}`}>
           <Paperclip size={14} />
           <span>{uploadState.toastMessage.text}</span>
@@ -65,7 +89,7 @@ export function Composer({ value, onChange, onSend, isBusy, isRecording, onToggl
             <input
               type="file"
               ref={fileInputRef}
-              accept=".pdf,.docx,.txt,.md,.csv,.json"
+              accept=".pdf,.docx,.txt,.md,.csv,.json,.py,.js,.ts,.tsx,.jsx,.html,.css,.sh,.bat,.sql,.yaml,.yml,.toml,.xml,.ini,.cfg,.log,.env"
               hidden
               onChange={handleFileChange}
             />
