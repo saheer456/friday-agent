@@ -17,13 +17,18 @@ export function useChat(
   const [isBusy, setIsBusy] = useState(false);
   const { limitedMode = false } = options;
 
+  // Reconnect states
+  const [reconnectCount, setReconnectCount] = useState(0);
+  const [isReconnecting, setIsReconnecting] = useState(false);
+
   // Session states
   const [sessions, setSessions] = useState<{ id: string; title: string; created_at?: string }[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string>('default-session');
   const [activeSessionFiles, setActiveSessionFiles] = useState<string[]>([]);
 
   const addSystemMessage = useCallback((text: string) => {
-    setMessages(prev => [...prev, { id: Date.now().toString(), role: 'assistant', content: text, streaming: false }]);
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    setMessages(prev => [...prev, { id: Date.now().toString(), role: 'assistant', content: text, streaming: false, timestamp: timeStr }]);
   }, []);
 
   const fetchSessions = useCallback(async () => {
@@ -46,17 +51,38 @@ export function useChat(
       const res = await authFetch(`/api/sessions/${sessionId}/messages`);
       if (res.ok) {
         const data = await res.json();
-        const mappedMessages = (data.messages || []).map((m: any, idx: number) => ({
-          id: `m-${sessionId}-${idx}`,
-          role: m.role,
-          content: m.content,
-          streaming: false,
-        }));
+        const mappedMessages = (data.messages || []).map((m: any, idx: number) => {
+          let timeStr = '';
+          if (m.created_at) {
+            try {
+              const dateStr = m.created_at.includes(' ') && !m.created_at.includes('T') && !m.created_at.includes('Z')
+                ? m.created_at.replace(' ', 'T') + 'Z'
+                : m.created_at;
+              const d = new Date(dateStr);
+              if (!isNaN(d.getTime())) {
+                timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+              }
+            } catch (e) {
+              console.error('Error parsing created_at:', e);
+            }
+          }
+          if (!timeStr) {
+            timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+          }
+          return {
+            id: `m-${sessionId}-${idx}`,
+            role: m.role,
+            content: m.content,
+            streaming: false,
+            timestamp: timeStr,
+          };
+        });
         setMessages(mappedMessages.length > 0 ? mappedMessages : [{
           id: `m-${sessionId}-welcome`,
           role: 'assistant',
           content: 'Session connected, sir. Ask anything when ready.',
           streaming: false,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
         }]);
         setActiveSessionFiles(data.files || []);
       }
@@ -110,7 +136,6 @@ export function useChat(
       });
       if (res.ok) {
         await fetchSessions();
-        // Update local session title if it's the active one or just to reflect change in real time
         setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, title: newTitle } : s));
       }
     } catch (e) {
@@ -119,6 +144,7 @@ export function useChat(
   }, [limitedMode, fetchSessions]);
 
   const clearChat = useCallback(async () => {
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
     try {
       if (limitedMode) {
         clearLocalMemory();
@@ -132,6 +158,7 @@ export function useChat(
           ? 'Local demo memory cleared.\nAsk anything when ready.'
           : 'Session cleared, sir.\nAsk anything when ready.',
         streaming: false,
+        timestamp: timeStr,
       }]);
       setPhases([]);
       setActiveSessionFiles([]);
@@ -141,7 +168,6 @@ export function useChat(
     }
   }, [limitedMode, activeSessionId, onStatusChange]);
 
-  // Fetch sessions list and select default session on mount
   useEffect(() => {
     if (!limitedMode) {
       fetchSessions().then(() => {
@@ -155,111 +181,135 @@ export function useChat(
 
     const userMsgId = `u-${Date.now()}`;
     const aiMsgId   = `a-${Date.now()}`;
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 
     setMessages(prev => [
       ...prev,
-      { id: userMsgId, role: 'user',      content: text, streaming: false },
-      { id: aiMsgId,   role: 'assistant', content: '',   streaming: true  },
+      { id: userMsgId, role: 'user',      content: text, streaming: false, timestamp: timeStr },
+      { id: aiMsgId,   role: 'assistant', content: '',   streaming: true,  timestamp: timeStr },
     ]);
 
     setPhases([]);
     setIsBusy(true);
     onStatusChange('Neural pipeline…', true);
 
-    try {
-      const endpoint = limitedMode ? '/api/chat/limited/stream' : '/api/chat/stream';
-      const payload = limitedMode
-        ? { message: text, local_context: retrieveLocalMemory(text) }
-        : { message: text, voice_mode: isVoiceMode, session_id: activeSessionId };
-      const res = await authFetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+    let attempt = 0;
+    const maxRetries = 3;
+    let success = false;
 
-      if (!res.ok) throw new Error((await res.text()) || res.statusText);
+    while (attempt < maxRetries && !success) {
+      try {
+        if (attempt > 0) {
+          setIsReconnecting(true);
+          setReconnectCount(attempt);
+          onStatusChange(`Reconnecting (Attempt ${attempt}/${maxRetries - 1})…`, true);
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+        }
 
-      const reader  = res.body?.getReader();
-      const decoder = new TextDecoder();
-      if (!reader) throw new Error('No readable stream');
+        const endpoint = limitedMode ? '/api/chat/limited/stream' : '/api/chat/stream';
+        const payload = limitedMode
+          ? { message: text, local_context: retrieveLocalMemory(text) }
+          : { message: text, voice_mode: isVoiceMode, session_id: activeSessionId };
+          
+        const res = await authFetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
 
-      let buffer    = '';
-      let fullText  = '';
-      let sawToken  = false;
-      let streamDone = false;
+        if (!res.ok) throw new Error((await res.text()) || res.statusText);
 
-      outer: while (!streamDone) {
-        const { done, value } = await reader.read();
-        if (done) break;
+        const reader  = res.body?.getReader();
+        const decoder = new TextDecoder();
+        if (!reader) throw new Error('No readable stream');
 
-        buffer += decoder.decode(value, { stream: true });
+        let buffer    = '';
+        let fullText  = '';
+        let sawToken  = false;
+        let streamDone = false;
 
-        let idx: number;
-        while ((idx = buffer.indexOf('\n\n')) >= 0) {
-          const raw  = buffer.slice(0, idx).trim();
-          buffer = buffer.slice(idx + 2);
-          if (!raw.startsWith('data:')) continue;
+        outer: while (!streamDone) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-          const data = raw.slice(5).trim();
+          buffer += decoder.decode(value, { stream: true });
 
-          if (data === '[DONE]') {
-            streamDone = true;
-            const finalText = fullText;
-            setMessages(prev =>
-              prev.map(m => m.id === aiMsgId ? { ...m, streaming: false, content: finalText } : m)
-            );
-            if (finalText.trim()) {
-              if (limitedMode) saveLocalMemory(text, finalText);
-              else queueTTS(finalText);
+          let idx: number;
+          while ((idx = buffer.indexOf('\n\n')) >= 0) {
+            const raw  = buffer.slice(0, idx).trim();
+            buffer = buffer.slice(idx + 2);
+            if (!raw.startsWith('data:')) continue;
+
+            const data = raw.slice(5).trim();
+
+            if (data === '[DONE]') {
+              streamDone = true;
+              success = true;
+              const finalText = fullText;
+              setMessages(prev =>
+                prev.map(m => m.id === aiMsgId ? { ...m, streaming: false, content: finalText } : m)
+              );
+              if (finalText.trim()) {
+                if (limitedMode) saveLocalMemory(text, finalText);
+                else queueTTS(finalText);
+              }
+              break outer;
             }
-            break outer;
-          }
 
-          let obj: any;
-          try { obj = JSON.parse(data); }
-          catch { continue; }
+            let obj: any;
+            try { obj = JSON.parse(data); }
+            catch { continue; }
 
-          if (obj.type === 'error') throw new Error(obj.message || 'Stream error');
+            if (obj.type === 'error') throw new Error(obj.message || 'Stream error');
 
-          if (obj.type === 'phase') {
-            setPhases(p => [...p, obj as Phase]);
-            onStatusChange(obj.title || 'Working…', true);
-          }
-
-          if (obj.type === 'token' && obj.text) {
-            const chunk = String(obj.text);
-            if (!sawToken) {
-              sawToken = true;
-              setPhases(p => [...p, {
-                id: 'stream',
-                title: 'Token stream',
-                detail: 'Primary language channel open · receiving deltas',
-              }]);
+            if (obj.type === 'phase') {
+              setPhases(p => [...p, obj as Phase]);
+              onStatusChange(obj.title || 'Working…', true);
             }
-            fullText += chunk;
-            setMessages(prev =>
-              prev.map(m => m.id === aiMsgId ? { ...m, content: m.content + chunk } : m)
-            );
+
+            if (obj.type === 'token' && obj.text) {
+              const chunk = String(obj.text);
+              if (!sawToken) {
+                sawToken = true;
+                setPhases(p => [...p, {
+                  id: 'stream',
+                  title: 'Token stream',
+                  detail: 'Primary language channel open · receiving deltas',
+                }]);
+              }
+              fullText += chunk;
+              setMessages(prev =>
+                prev.map(m => m.id === aiMsgId ? { ...m, content: m.content + chunk } : m)
+              );
+            }
           }
         }
+
+        setPhases(p => [...p, {
+          id: 'commit',
+          title: 'Lattice sealed',
+          detail: 'Response materialized · dialogue core synchronized',
+        }]);
+
+        success = true;
+      } catch (err: any) {
+        attempt++;
+        console.warn(`Connection attempt ${attempt} failed:`, err);
+        if (attempt >= maxRetries) {
+          const msg = err?.message ?? String(err);
+          setMessages(prev =>
+            prev.map(m => m.id === aiMsgId ? { ...m, content: `⚠️ Connection permanently failed: ${msg}`, streaming: false } : m)
+          );
+          setPhases(p => [...p, { id: 'fault', title: 'Subsystem fault', detail: msg }]);
+        }
+      } finally {
+        setIsReconnecting(false);
+        setReconnectCount(0);
       }
-
-      setPhases(p => [...p, {
-        id: 'commit',
-        title: 'Lattice sealed',
-        detail: 'Response materialized · dialogue core synchronized',
-      }]);
-
-    } catch (err: any) {
-      const msg = err?.message ?? String(err);
-      setMessages(prev =>
-        prev.map(m => m.id === aiMsgId ? { ...m, content: `⚠️ ${msg}`, streaming: false } : m)
-      );
-      setPhases(p => [...p, { id: 'fault', title: 'Subsystem fault', detail: msg }]);
-    } finally {
-      setIsBusy(false);
-      onStatusChange('Online', false);
     }
+
+    setIsBusy(false);
+    onStatusChange('Online', false);
   }, [limitedMode, activeSessionId, onStatusChange, queueTTS]);
 
   const unlinkFile = useCallback(async (filename: string) => {
@@ -292,7 +342,8 @@ export function useChat(
     deleteSession,
     renameSession,
     unlinkFile,
-    setActiveSessionFiles
+    setActiveSessionFiles,
+    reconnectCount,
+    isReconnecting,
   };
 }
-

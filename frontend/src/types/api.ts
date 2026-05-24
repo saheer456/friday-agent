@@ -3,6 +3,7 @@ export interface Message {
   role: 'user' | 'assistant';
   content: string;
   streaming?: boolean;
+  timestamp?: string;
 }
 
 export interface Phase {

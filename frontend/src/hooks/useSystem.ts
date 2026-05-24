@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import type { SystemInfo } from '../types/api';
 import { authFetch } from '../lib/api';
 
-export function useSystem() {
+export function useSystem(enabled = true) {
   const [system, setSystem] = useState<SystemInfo | null>(null);
   const [error, setError] = useState<boolean>(false);
 
@@ -20,8 +20,10 @@ export function useSystem() {
   }, []);
 
   useEffect(() => {
-    fetchSystem();
-  }, [fetchSystem]);
+    if (enabled) {
+      fetchSystem();
+    }
+  }, [fetchSystem, enabled]);
 
   return { system, error, fetchSystem };
 }

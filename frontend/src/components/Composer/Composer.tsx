@@ -15,9 +15,10 @@ interface ComposerProps {
   allowUpload?: boolean;
   activeSessionFiles?: string[];
   onRemoveFile?: (filename: string) => void;
+  sttSupported?: boolean;
 }
 
-export function Composer({ value, onChange, onSend, isBusy, isRecording, onToggleRecord, onUpload, uploadState, interimText, allowUpload = true, activeSessionFiles = [], onRemoveFile }: ComposerProps) {
+export function Composer({ value, onChange, onSend, isBusy, isRecording, onToggleRecord, onUpload, uploadState, interimText, allowUpload = true, activeSessionFiles = [], onRemoveFile, sttSupported = true }: ComposerProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -74,10 +75,15 @@ export function Composer({ value, onChange, onSend, isBusy, isRecording, onToggl
       )}
 
       {uploadState.toastMessage && (
-
         <div className={`${styles.uploadToast} ${uploadState.toastMessage.type ? styles[uploadState.toastMessage.type] : ''}`}>
           <Paperclip size={14} />
           <span>{uploadState.toastMessage.text}</span>
+        </div>
+      )}
+
+      {value.length > 8000 && (
+        <div className={styles.charCount}>
+          {value.length.toLocaleString()} / 16,000
         </div>
       )}
 
@@ -112,6 +118,7 @@ export function Composer({ value, onChange, onSend, isBusy, isRecording, onToggl
           value={value}
           placeholder={isRecording && interimText ? interimText : "Message FRIDAY…"}
           maxLength={16000}
+          title="Enter to send · Shift+Enter for newline"
           onChange={(e) => {
             onChange(e.target.value);
             autoGrow();
@@ -121,9 +128,10 @@ export function Composer({ value, onChange, onSend, isBusy, isRecording, onToggl
 
         <button 
           type="button" 
-          className={`${styles.btn} ${styles.voice} ${isRecording ? styles.recording : ''}`}
-          onClick={onToggleRecord}
-          title="Voice input"
+          className={`${styles.btn} ${styles.voice} ${isRecording ? styles.recording : ''} ${!sttSupported ? styles.unsupported : ''}`}
+          onClick={sttSupported ? onToggleRecord : undefined}
+          title={sttSupported ? "Voice input" : "Speech-to-text not supported in this browser"}
+          disabled={!sttSupported}
         >
           <Mic size={20} />
         </button>

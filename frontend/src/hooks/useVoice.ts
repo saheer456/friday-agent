@@ -13,6 +13,7 @@ export function useVoice(
   onInterim?: (text: string) => void,
 ) {
   const [isRecording, setIsRecording] = useState(false);
+  const [sttSupported, setSttSupported] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
 
   const recognitionRef = useRef<any>(null);
@@ -31,7 +32,11 @@ export function useVoice(
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRec) return;
+    if (!SpeechRec) {
+      setSttSupported(false);
+      return;
+    }
+    setSttSupported(true);
 
     const recognition = new SpeechRec();
     recognition.continuous = true;
@@ -202,5 +207,6 @@ export function useVoice(
     toggleRecording,
     stopAudio,
     queueTTS,
+    sttSupported,
   };
 }

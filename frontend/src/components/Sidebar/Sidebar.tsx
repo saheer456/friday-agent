@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Trash, Check, Edit3, MessageSquare, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Trash, Check, Edit3, MessageSquare, ChevronLeft, ChevronRight, Download } from 'lucide-react';
 import styles from './Sidebar.module.css';
 
 interface Session {
@@ -31,7 +31,28 @@ export function Sidebar({
   onRenameSession,
 }: SidebarProps) {
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState<string>('');
+
+  const handleExportSession = async (id: string) => {
+    try {
+      const { authFetch } = await import('../../lib/api');
+      const res = await authFetch(`/api/sessions/${id}/export?format=markdown`);
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `session_${id}.md`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+      }
+    } catch (e) {
+      console.error('Error exporting session:', e);
+    }
+  };
 
   const handleStartRename = (session: Session) => {
     setEditingSessionId(session.id);
@@ -105,6 +126,44 @@ export function Sidebar({
             sessions.map(s => {
               const isActive = s.id === activeSessionId;
               const isEditing = s.id === editingSessionId;
+              const isDeleting = s.id === deletingSessionId;
+
+              if (isDeleting) {
+                return (
+                  <div
+                    key={s.id}
+                    className={`${styles.sessionItem} ${styles.deleting} ${isActive ? styles.active : ''}`}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className={styles.sessionMain}>
+                      <span className={styles.confirmText}>Purge?</span>
+                    </div>
+                    <div className={styles.sessionActions}>
+                      <button
+                        className={styles.actionBtn}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteSession(s.id);
+                          setDeletingSessionId(null);
+                        }}
+                        title="Yes, purge"
+                      >
+                        <Check size={14} className={styles.saveIcon} />
+                      </button>
+                      <button
+                        className={styles.actionBtn}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeletingSessionId(null);
+                        }}
+                        title="No, cancel"
+                      >
+                        <span style={{ fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)' }}>✕</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
 
               return (
                 <div
@@ -160,9 +219,17 @@ export function Sidebar({
                           className={styles.actionBtn}
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (confirm('Terminate this dialogue channel and purge its transcript?')) {
-                              onDeleteSession(s.id);
-                            }
+                            handleExportSession(s.id);
+                          }}
+                          title="Export transcript"
+                        >
+                          <Download size={14} />
+                        </button>
+                        <button
+                          className={styles.actionBtn}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeletingSessionId(s.id);
                           }}
                           title="Purge session"
                         >

@@ -199,19 +199,21 @@ async def _ingest_supabase(filename: str, chunks: List[str], embedder) -> None:
 
 async def _ingest_chroma(filename: str, chunks: List[str], embedder) -> None:
     await _ensure_chroma()
+    sem = asyncio.Semaphore(8)
 
     async def _store_chunk(i: int, chunk: str):
-        vector = await embedder.embed_text(chunk)
-        chunk_id = f"{filename}::chunk_{i}"
-        def _upsert():
-            _file_collection.upsert(
-                ids=[chunk_id],
-                embeddings=[vector],
-                documents=[chunk],
-                metadatas=[{"filename": filename, "chunk": i, "total_chunks": len(chunks)}],
-            )
-        async with _chroma_lock:
-            await asyncio.to_thread(_upsert)
+        async with sem:
+            vector = await embedder.embed_text(chunk)
+            chunk_id = f"{filename}::chunk_{i}"
+            def _upsert():
+                _file_collection.upsert(
+                    ids=[chunk_id],
+                    embeddings=[vector],
+                    documents=[chunk],
+                    metadatas=[{"filename": filename, "chunk": i, "total_chunks": len(chunks)}],
+                )
+            async with _chroma_lock:
+                await asyncio.to_thread(_upsert)
 
     await asyncio.gather(*[_store_chunk(i, c) for i, c in enumerate(chunks)])
 

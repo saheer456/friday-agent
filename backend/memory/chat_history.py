@@ -100,11 +100,11 @@ async def get_latest_chat_messages(session_id: str, limit: int = 20) -> List[Dic
         async with aiosqlite.connect(DB_PATH) as conn:
             conn.row_factory = aiosqlite.Row
             async with conn.execute(
-                'SELECT role, content FROM chat_history WHERE session_id = ? ORDER BY id DESC LIMIT ?',
+                'SELECT role, content, created_at FROM chat_history WHERE session_id = ? ORDER BY id DESC LIMIT ?',
                 (session_id, limit)
             ) as cursor:
                 rows = await cursor.fetchall()
-                results = [{"role": row["role"], "content": row["content"]} for row in rows]
+                results = [{"role": row["role"], "content": row["content"], "created_at": row["created_at"]} for row in rows]
                 results.reverse()
                 return results
     except Exception:

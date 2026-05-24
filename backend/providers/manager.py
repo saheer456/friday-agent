@@ -177,6 +177,7 @@ class ProviderManager:
                     break
 
         logger.error(f"All providers failed streaming. Last error: {last_error}")
+        yield {"type": "error", "error": last_error or "All LLM providers failed."}
 
     async def health_check_all(self) -> dict[str, bool]:
         results = {}

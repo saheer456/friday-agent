@@ -129,3 +129,38 @@
     display: none;
   }
 }
+
+.authLoadingWrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.authLoadingLogo {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 16px var(--primary-border);
+  animation: logo-pulse 1.8s ease-in-out infinite alternate;
+}
+
+@keyframes logo-pulse {
+  0% { transform: scale(0.9); box-shadow: 0 0 8px rgba(74, 124, 89, 0.2); }
+  100% { transform: scale(1.1); box-shadow: 0 0 24px rgba(74, 124, 89, 0.6); }
+}
+
+.authLoadingText {
+  font-family: var(--font-head);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--primary);
+  letter-spacing: 0.5px;
+  animation: text-pulse 1.8s ease-in-out infinite alternate;
+}
+
+@keyframes text-pulse {
+  0% { opacity: 0.6; }
+  100% { opacity: 1; }
+}

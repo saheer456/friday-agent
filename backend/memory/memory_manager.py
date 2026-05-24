@@ -41,7 +41,21 @@ class MemoryManager:
         importance, category = memory_ranker.evaluate_and_categorize(exchange_text)
 
         # 3. Persist important memories to both stores
-        if importance >= 0.4:
+        import os
+        min_importance = float(os.getenv("FRIDAY_MEMORY_MIN_IMPORTANCE", "0.4"))
+        if importance >= min_importance:
+            # Similarity pre-check to prevent duplicate memory creation
+            try:
+                from .semantic_memory import embedder, vector_store
+                if embedder.is_ready() and vector_store.is_ready():
+                    query_vector = await embedder.embed_text(user_msg)
+                    hits = await vector_store.search_memories(query_vector, limit=1)
+                    if hits and hits[0].get("score", 0.0) >= 0.85:
+                        logger.info(f"Discarding duplicate memory (similarity: {hits[0]['score']:.2f})")
+                        return
+            except Exception as e:
+                logger.error(f"Failed memory duplicate check: {e}")
+
             memory_id = await long_term.insert_memory(
                 content=exchange_text[:2000],
                 category=category,

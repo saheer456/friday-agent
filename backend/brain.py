@@ -20,7 +20,7 @@ logger = logging.getLogger("Brain")
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 conversation_histories: dict[str, list[dict]] = {}
-MAX_HISTORY = 6
+MAX_HISTORY = 30
 _history_lock = asyncio.Lock()
 
 _PROFILE_CACHE: str | None = None
@@ -31,6 +31,8 @@ _SMALLTALK_PATTERNS = [
     "good morning", "good evening", "good night", "gn", "bye",
     "ok", "okay", "cool", "thanks", "thank you", "lol", "haha",
     "nice", "great", "got it", "sounds good", "sure", "yep", "nope",
+    "thank", "thanks friday", "thanks helper", "gm", "ge", "hello there",
+    "testing", "test", "hi friday", "hey friday", "hello friday"
 ]
 
 
@@ -86,6 +88,25 @@ async def _get_context(user_message: str, session_id: str = "default-session") -
         logger.debug(f"File search error: {e}")
 
     return "\n\n".join(parts)
+
+
+async def _run_tool_with_progress(fn_name: str, fn_args: str, emit_phases: bool):
+    task = asyncio.create_task(tool_bridge.handle_tool_call_async(fn_name, fn_args))
+    while not task.done():
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=15.0)
+        except asyncio.TimeoutError:
+            if emit_phases:
+                yield (
+                    "phase",
+                    {
+                        "id": "tool_progress",
+                        "title": "Still working...",
+                        "detail": f"Processing subroutine {fn_name}...",
+                    },
+                )
+    res_str = await task
+    yield ("result", res_str)
 
 
 async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, emit_phases: bool):
@@ -203,6 +224,76 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
         consecutive_failures = 0
         tool_name_counts: dict[str, int] = {}
 
+        skip_tool_loop = False
+        is_planner_request = any(k in user_message.lower() for k in ["plan:", "step by step", "multi-step", "decompose", "planner"])
+        if is_planner_request:
+            if emit_phases:
+                yield (
+                    "phase",
+                    {
+                        "id": "planner_decomposing",
+                        "title": "Planner Engine",
+                        "detail": "Decomposing task into logical steps...",
+                    },
+                )
+            
+            from .planner.engine import planner
+            tools_payload = tool_bridge.get_tools_payload()
+            try:
+                steps = await planner.decompose(user_message, tools_payload)
+                for idx, step in enumerate(steps):
+                    if emit_phases:
+                        yield (
+                            "phase",
+                            {
+                                "id": f"plan_step_{step.id}",
+                                "title": f"Plan Step {idx+1}/{len(steps)}",
+                                "detail": f"{step.reasoning} (Tool: {step.tool or 'None'})",
+                            },
+                        )
+                    
+                    if step.tool:
+                        try:
+                            t0 = time.monotonic()
+                            res_str = ""
+                            async for event_type, val in _run_tool_with_progress(step.tool, json.dumps(step.args), emit_phases):
+                                if event_type == "phase":
+                                    yield (event_type, val)
+                                elif event_type == "result":
+                                    res_str = val
+                            duration = (time.monotonic() - t0) * 1000
+                            
+                            step.status = "completed"
+                            step.result = res_str
+                            
+                            await event_bus.emit("tool_called", {"tool": step.tool, "args": json.dumps(step.args), "duration_ms": duration})
+                            await event_bus.emit("tool_finished", {"tool": step.tool, "success": True})
+                            
+                        except Exception as e:
+                            step.status = "failed"
+                            step.error = str(e)
+                            await event_bus.emit("tool_finished", {"tool": step.tool, "success": False})
+                    else:
+                        step.status = "completed"
+                        
+                steps_summary = []
+                for idx, step in enumerate(steps):
+                    status_str = "Succeeded" if step.status == "completed" else "Failed"
+                    res_preview = str(step.result)[:500] + "..." if step.result else str(step.error)
+                    steps_summary.append(
+                        f"Step {idx+1}: {step.reasoning}\n"
+                        f"Tool: {step.tool}\n"
+                        f"Status: {status_str}\n"
+                        f"Result: {res_preview}"
+                    )
+                
+                summary_content = "\n\n".join(steps_summary)
+                system_content += f"\n\nPLANNER STEPS COMPLETED:\n{summary_content}"
+                messages = [{"role": "system", "content": system_content}, *session_history]
+                skip_tool_loop = True
+            except Exception as e:
+                logger.error(f"Planner failed: {e}")
+
         for round_num in range(max_tool_rounds):
             if time.monotonic() - turn_start > turn_timeout:
                 yield ("error", "[System] Tool execution timed out.")
@@ -210,7 +301,7 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
                 session_history.append({"role": "assistant", "content": "[Response timed out]"})
                 break
 
-            tools_payload = tool_bridge.get_tools_payload()
+            tools_payload = tool_bridge.get_tools_payload() if not skip_tool_loop else []
             full_response = ""
             last_error = ""
             tool_calls_accumulator = {}
@@ -333,7 +424,12 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
                         continue
 
                     t0 = time.monotonic()
-                    res_str = await tool_bridge.handle_tool_call_async(fn_name, fn_args)
+                    res_str = ""
+                    async for event_type, val in _run_tool_with_progress(fn_name, fn_args, emit_phases):
+                        if event_type == "phase":
+                            yield (event_type, val)
+                        elif event_type == "result":
+                            res_str = val
                     duration = (time.monotonic() - t0) * 1000
 
                     is_failure = res_str.startswith("[Error:") or '"status": "failed"' in res_str

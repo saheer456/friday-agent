@@ -5,6 +5,7 @@ import { Composer } from './components/Composer/Composer';
 import { Telemetry } from './components/Telemetry/Telemetry';
 import { Memories } from './components/Memories/Memories';
 import { Sidebar } from './components/Sidebar/Sidebar';
+import { ConfirmModal } from './components/ConfirmModal/ConfirmModal';
 import { useSystem } from './hooks/useSystem';
 import { useChat } from './hooks/useChat';
 import { useVoice } from './hooks/useVoice';
@@ -29,9 +30,10 @@ function App() {
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [authNotice, setAuthNotice] = useState('');
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const limitedMode = loginEnabled && isAuthenticated && !hasFullAccess;
 
-  const { system, fetchSystem } = useSystem();
+  const { system, fetchSystem } = useSystem(!authLoading && (!loginEnabled || isAuthenticated));
   const uploadState = useFileUpload();
 
   const handleStatusChange = useCallback((status: string, busy: boolean) => {
@@ -39,7 +41,7 @@ function App() {
     if (!busy) fetchSystem();
   }, [fetchSystem]);
 
-  const { isRecording, isPlaying, toggleRecording, stopAudio, queueTTS } = useVoice(
+  const { isRecording, isPlaying, toggleRecording, stopAudio, queueTTS, sttSupported } = useVoice(
     (speechText) => {
       setInterimText('');
       const finalMsg = (initialComposerValue.trim() + ' ' + speechText.trim()).trim();
@@ -182,7 +184,14 @@ function App() {
   };
 
   if (authLoading) {
-    return <div className={styles.authShell}>Checking access…</div>;
+    return (
+      <div className={styles.authShell}>
+        <div className={styles.authLoadingWrapper}>
+          <div className={styles.authLoadingLogo}></div>
+          <div className={styles.authLoadingText}>Synchronizing neural cores…</div>
+        </div>
+      </div>
+    );
   }
 
   if (loginEnabled && !isAuthenticated) {
@@ -251,7 +260,7 @@ function App() {
           statusText={statusText}
           isBusy={chatBusy}
           isSpeaking={isPlaying}
-          onClearChat={clearChat}
+          onClearChat={() => setShowClearConfirm(true)}
           onToggleTelemetry={() => setTelemetryOpen(o => !o)}
           onToggleMemories={() => setMemoriesOpen(o => !o)}
           onLogout={handleLogout}
@@ -269,6 +278,7 @@ function App() {
           messages={messages}
           isSpeaking={isPlaying}
           onDropFile={hasFullAccess ? handleUpload : undefined}
+          onSelectSuggestion={(text) => setComposerValue(text)}
         />
 
         <div className={styles.composerWrap}>
@@ -288,11 +298,18 @@ function App() {
             interimText={interimText}
             activeSessionFiles={activeSessionFiles}
             onRemoveFile={unlinkFile}
+            sttSupported={sttSupported}
           />
         </div>
 
         <footer className={styles.footer}>
-          Local · Web Speech API · TTS via Kokoro/Edge
+          {system ? (
+            <>
+              Local · {system.voice.stt_model ? `STT: ${system.voice.stt_model}` : 'Web Speech API'} · TTS: {system.voice.tts_backend} ({system.voice.tts_voice})
+            </>
+          ) : (
+            <>Local · Web Speech API · TTS via Kokoro/Edge</>
+          )}
         </footer>
       </div>
 
@@ -306,6 +323,17 @@ function App() {
       <Memories
         isOpen={memoriesOpen}
         onClose={() => setMemoriesOpen(false)}
+      />
+      <ConfirmModal
+        isOpen={showClearConfirm}
+        title="Clear Transcript"
+        message="Are you sure you want to wipe the active session's dialogue history? This action is irreversible."
+        confirmLabel="Wipe history"
+        onConfirm={() => {
+          clearChat();
+          setShowClearConfirm(false);
+        }}
+        onClose={() => setShowClearConfirm(false)}
       />
     </div>
   );

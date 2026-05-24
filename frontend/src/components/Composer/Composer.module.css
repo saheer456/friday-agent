@@ -199,3 +199,28 @@
   color: #ff4d4d;
 }
 
+.unsupported {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.unsupported:hover {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+.charCount {
+  position: absolute;
+  right: 12px;
+  bottom: calc(100% + 8px);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg2);
+  border: 1px solid var(--outline);
+  padding: 4px 8px;
+  border-radius: 4px;
+  box-shadow: var(--shadow-sm);
+}
+

@@ -81,7 +81,6 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 1.2px;
-  margin-bottom: 6px;
   color: var(--text-muted);
 }
 
@@ -130,7 +129,7 @@
   flex-shrink: 0;
 }
 .ai .msgBody {
-  background: #fff;
+  background: var(--bg-card);
   border: 1px solid var(--outline);
   border-bottom-left-radius: 4px;
   color: var(--text);
@@ -249,4 +248,46 @@
 @keyframes core-glow {
   0% { box-shadow: 0 0 8px rgba(74, 124, 89, 0.15); border-color: var(--primary-border); }
   100% { box-shadow: 0 0 16px rgba(74, 124, 89, 0.45); border-color: var(--primary); }
+}
+
+.msgHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.msgMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.msgTime {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.copyBtn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  opacity: 0;
+}
+
+.msg:hover .copyBtn {
+  opacity: 1;
+}
+
+.copyBtn:hover {
+  background: var(--border);
+  color: var(--primary);
 }

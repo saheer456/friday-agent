@@ -340,3 +340,23 @@
   }
 }
 
+.sessionItem.deleting {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.sessionItem.deleting:hover {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.sessionItem.deleting .sessionActions {
+  opacity: 1;
+}
+
+.confirmText {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #b91c1c;
+}
+

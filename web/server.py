@@ -3,7 +3,7 @@ FRIDAY web server — FastAPI + SSE streaming chat.
 Run from repo root: python -m uvicorn web.server:app --host 127.0.0.1 --port 8080
 """
 
-from __future__ import annotations
+# from __future__ import annotations
 
 import faulthandler
 faulthandler.enable()
@@ -29,13 +29,18 @@ from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 load_dotenv(ROOT / "friday-agent.env")
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Security
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Security, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 import httpx
+import asyncio
+
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from backend import brain
 
@@ -83,12 +88,18 @@ def _supabase_auth_enabled() -> bool:
     return (os.getenv("FRIDAY_SUPABASE_AUTH_ENABLED", "0").strip() in {"1", "true", "yes", "on"})
 
 
+def _api_key_configured() -> str | None:
+    return (os.getenv("FRIDAY_API_KEY") or "").strip() or None
+
+
 def _full_access_emails() -> set[str]:
-    configured = (os.getenv("FRIDAY_FULL_ACCESS_EMAILS") or "khansaheer424@gmail.com").strip()
+    configured = (os.getenv("FRIDAY_FULL_ACCESS_EMAILS") or "").strip()
     return {email.strip().lower() for email in configured.split(",") if email.strip()}
 
 
 def _has_full_access(user: dict) -> bool:
+    if user.get("email") == "api-key-owner@local":
+        return True
     email = (user.get("email") or "").strip().lower()
     return bool(email) and email in _full_access_emails()
 
@@ -113,16 +124,26 @@ async def _verify_supabase_token(token: str) -> dict:
     return resp.json()
 
 
-async def verify_user_auth(credentials: HTTPAuthorizationCredentials | None = Security(_bearer)):
-    if not _supabase_auth_enabled():
-        return {"auth_disabled": True}
-    if credentials is None or credentials.scheme.lower() != "bearer" or not credentials.credentials:
-        raise HTTPException(status_code=401, detail="Missing bearer token.")
-    return await _verify_supabase_token(credentials.credentials)
+async def verify_user_auth(request: Request, credentials: HTTPAuthorizationCredentials | None = Security(_bearer)):
+    if _supabase_auth_enabled():
+        if credentials is None or credentials.scheme.lower() != "bearer" or not credentials.credentials:
+            raise HTTPException(status_code=401, detail="Missing bearer token.")
+        return await _verify_supabase_token(credentials.credentials)
+    
+    api_key = _api_key_configured()
+    if api_key:
+        x_api_key = request.headers.get("x-api-key")
+        if x_api_key == api_key:
+            return {"email": "api-key-owner@local", "full_access": True}
+        if credentials and credentials.scheme.lower() == "bearer" and credentials.credentials == api_key:
+            return {"email": "api-key-owner@local", "full_access": True}
+        raise HTTPException(status_code=401, detail="Invalid or missing API key.")
+        
+    return {"auth_disabled": True}
 
 
-async def verify_auth(credentials: HTTPAuthorizationCredentials | None = Security(_bearer)):
-    user = await verify_user_auth(credentials)
+async def verify_auth(request: Request, credentials: HTTPAuthorizationCredentials | None = Security(_bearer)):
+    user = await verify_user_auth(request, credentials)
     if user.get("auth_disabled"):
         return user
     if not _has_full_access(user):
@@ -168,8 +189,19 @@ async def lifespan(app: FastAPI):
 
     # TTS warmup (background — does not block server bind)
     try:
-        _threading.Thread(target=_load_tts, daemon=True, name="warmup-tts").start()
-        asyncio.create_task(_ping_edge_tts())
+        from backend.tts import TTS_BACKEND, KOKORO_MODEL_PATH, KOKORO_VOICES_PATH
+        backend = TTS_BACKEND
+        has_kokoro_files = os.path.exists(KOKORO_MODEL_PATH) and os.path.exists(KOKORO_VOICES_PATH)
+        
+        if backend == "kokoro":
+            _threading.Thread(target=_load_tts, daemon=True, name="warmup-tts").start()
+        elif backend == "edge":
+            asyncio.create_task(_ping_edge_tts())
+        else: # auto
+            if has_kokoro_files:
+                _threading.Thread(target=_load_tts, daemon=True, name="warmup-tts").start()
+            else:
+                asyncio.create_task(_ping_edge_tts())
         print("[STARTUP] ✓ TTS warmup started")
     except Exception:
         print("[STARTUP] TTS warmup failed")
@@ -198,7 +230,10 @@ async def lifespan(app: FastAPI):
         pass
 
 
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="FRIDAY Web", version="1.0", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 print("[BOOT] FastAPI app created")
 
@@ -234,6 +269,8 @@ app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 _tts_ready = threading.Event()
 _stt_ready = True
 _memory_ready = False
+_whisper_model = None
+_whisper_lock = asyncio.Lock()
 
 # ─────────────────────────────────────────────────────────────
 # Safe memory initialization
@@ -317,7 +354,7 @@ async def auth_me(credentials: HTTPAuthorizationCredentials | None = Security(_b
         "login_enabled": True,
         "authenticated": True,
         "full_access": _has_full_access(user),
-        "contact_email": "khansaheer424@gmail.com",
+        "contact_email": os.getenv("FRIDAY_CONTACT_EMAIL", "").strip(),
         "user": user,
     }
 
@@ -345,8 +382,68 @@ async def health():
     return {"status": "ok", "service": "friday-web"}
 
 
+@app.get("/api/admin/health-detailed")
+async def health_detailed(_auth: dict = Depends(verify_auth)):
+    memory_enabled = os.getenv("FRIDAY_ENABLE_MEMORY", "1").strip() in {"1", "true", "yes", "on"}
+    provider_statuses = {}
+    from backend.providers import provider_manager
+    for p_name in provider_manager._fallback_order:
+        p = provider_manager.get(p_name)
+        if p:
+            provider_statuses[p_name] = {
+                "configured": bool(p.config.api_key and "your_" not in p.config.api_key.lower()),
+                "model": p.config.model,
+                "base_url": p.config.base_url,
+            }
+            
+    return {
+        "status": "ok",
+        "memory": {
+            "enabled": memory_enabled,
+            "ready": _memory_ready,
+        },
+        "tts": {
+            "backend": os.getenv("FRIDAY_TTS_BACKEND", "auto"),
+            "ready": _tts_ready.is_set(),
+        },
+        "stt": {
+            "ready": _stt_ready,
+            "whisper_cached": _whisper_model is not None,
+        },
+        "providers": provider_statuses,
+    }
+
+
+@app.post("/api/admin/reload-skills")
+async def reload_skills(_auth: dict = Depends(verify_auth)):
+    try:
+        def _reload():
+            import importlib
+            import sys
+            from backend.skills.skill_base import SkillRegistry
+            
+            modules_to_reload = [
+                name for name in sys.modules 
+                if name.startswith("backend.skills.") and name != "backend.skills.skill_base"
+            ]
+            for mod_name in sorted(modules_to_reload):
+                try:
+                    importlib.reload(sys.modules[mod_name])
+                except Exception:
+                    pass
+                    
+            SkillRegistry.clear()
+            import backend.tool_bridge
+            importlib.reload(backend.tool_bridge)
+            
+        await asyncio.to_thread(_reload)
+        return {"status": "ok", "message": "Skills hot-reloaded successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to reload skills: {e}")
+
+
 @app.get("/api/system")
-async def system_info():
+async def system_info(_auth: dict = Depends(verify_user_auth)):
     """Voice stack + LLM routing (HUD)."""
     # Count total turns in default or all active session histories
     history_turns = sum(len(h) for h in brain.conversation_histories.values()) if brain.conversation_histories else 0
@@ -360,7 +457,8 @@ async def system_info():
 
 
 @app.post("/api/chat/stream")
-async def chat_stream(body: ChatBody, _auth: dict = Depends(verify_auth)):
+@limiter.limit("30/minute")
+async def chat_stream(request: Request, body: ChatBody, _auth: dict = Depends(verify_auth)):
     """SSE: phase + token + error events, then `[DONE]`."""
 
     def _friendly_error(raw: str) -> str:
@@ -467,7 +565,9 @@ async def limited_chat_stream(body: LimitedChatBody, _auth: dict = Depends(verif
 
 
 @app.post("/api/upload")
+@limiter.limit("20/minute")
 async def upload_file(
+    request: Request,
     file: UploadFile = File(...),
     session_id: str = Form("default-session"),
     _auth: dict = Depends(verify_auth)
@@ -575,6 +675,39 @@ async def delete_session(session_id: str, _auth: dict = Depends(verify_auth)):
     return {"ok": True}
 
 
+@app.get("/api/sessions/{session_id}/export")
+async def export_session(session_id: str, format: str = "markdown", _auth: dict = Depends(verify_auth)):
+    import io
+    from backend.memory import chat_history
+    messages = await chat_history.get_latest_chat_messages(session_id, limit=500)
+    if not messages:
+        raise HTTPException(status_code=404, detail="Session has no messages or does not exist.")
+        
+    if format.lower() == "json":
+        content = json.dumps(messages, indent=2, ensure_ascii=False)
+        headers = {"Content-Disposition": f"attachment; filename=session_{session_id}.json"}
+        return StreamingResponse(
+            io.BytesIO(content.encode("utf-8")),
+            media_type="application/json",
+            headers=headers
+        )
+    else:
+        md_lines = [f"# FRIDAY AI Dialogue Session: {session_id}\n"]
+        for m in messages:
+            role_label = "FRIDAY" if m["role"] == "assistant" else "YOU"
+            created_str = f" ({m['created_at']})" if m.get("created_at") else ""
+            md_lines.append(f"### {role_label}{created_str}\n")
+            md_lines.append(f"{m['content']}\n\n---\n")
+            
+        md_content = "\n".join(md_lines)
+        headers = {"Content-Disposition": f"attachment; filename=session_{session_id}.md"}
+        return StreamingResponse(
+            io.BytesIO(md_content.encode("utf-8")),
+            media_type="text/markdown",
+            headers=headers
+        )
+
+
 @app.get("/api/sessions/{session_id}/messages")
 async def get_session_messages(session_id: str, _auth: dict = Depends(verify_auth)):
     from backend.memory import chat_history
@@ -640,7 +773,9 @@ class STTBody(BaseModel):
 
 
 @app.post("/api/stt")
+@limiter.limit("10/minute")
 async def speech_to_text(
+    request: Request,
     file: UploadFile = File(...),
     _auth: dict = Depends(verify_auth),
 ):
@@ -654,12 +789,16 @@ async def speech_to_text(
     try:
         with open(path, "wb") as f:
             f.write(data)
-        from faster_whisper import WhisperModel
-        model = WhisperModel(
-            os.getenv("FRIDAY_WHISPER_MODEL", "small"),
-            device=os.getenv("FRIDAY_WHISPER_DEVICE", "cpu"),
-            compute_type=os.getenv("FRIDAY_WHISPER_COMPUTE", "int8"),
-        )
+        global _whisper_model
+        async with _whisper_lock:
+            if _whisper_model is None:
+                from faster_whisper import WhisperModel
+                _whisper_model = WhisperModel(
+                    os.getenv("FRIDAY_WHISPER_MODEL", "small"),
+                    device=os.getenv("FRIDAY_WHISPER_DEVICE", "cpu"),
+                    compute_type=os.getenv("FRIDAY_WHISPER_COMPUTE", "int8"),
+                )
+            model = _whisper_model
         segs, _ = model.transcribe(
             path,
             language="en",
