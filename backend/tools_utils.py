@@ -8,6 +8,7 @@ import webbrowser
 import pyperclip
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 import httpx
 
 from . import rag, scraper

@@ -619,7 +619,7 @@ async def chat_stream(request: Request, body: ChatBody, _auth: dict = Depends(ve
 @app.post("/api/chat/limited/stream")
 async def limited_chat_stream(body: LimitedChatBody, _auth: dict = Depends(verify_user_auth)):
     """Limited demo chat: no backend memory, no powerful tools, browser context only."""
-    from backend import tools
+    from backend import tools_utils
     from backend.providers import provider_manager
 
     async def event_gen():
@@ -642,7 +642,7 @@ async def limited_chat_stream(body: LimitedChatBody, _auth: dict = Depends(verif
                 except Exception as e:
                     print(f"[ERROR] Location extraction failed: {e}")
 
-                weather = await tools.get_weather(location=location)
+                weather = await tools_utils.get_weather(location=location)
                 text = weather.get("summary") if isinstance(weather, dict) else None
                 if not text:
                     text = "Weather is unavailable right now."

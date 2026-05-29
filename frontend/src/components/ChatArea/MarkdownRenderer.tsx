@@ -18,7 +18,7 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
       if (part.startsWith('`') && part.endsWith('`')) {
         parts.push(
           <code key={key++} className="inline-code" style={{
-            backgroundColor: 'rgba(255, 255, 255, 0.08)',
+            backgroundColor: 'rgba(128, 128, 128, 0.15)',
             padding: '2px 6px',
             borderRadius: '4px',
             fontFamily: 'monospace',
@@ -87,12 +87,13 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
         i++; // skip closing ```
         blocks.push(
           <pre key={blockKey++} style={{
-            backgroundColor: 'rgba(0, 0, 0, 0.25)',
+            backgroundColor: '#1e293b',
+            color: '#f8fafc',
             padding: '12px 16px',
             borderRadius: '8px',
             overflowX: 'auto',
             margin: '1em 0',
-            border: '1px solid rgba(255, 255, 255, 0.05)',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
             fontFamily: 'monospace',
             fontSize: '0.9em'
           }}>
@@ -104,7 +105,7 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
 
       // 3. Horizontal Rule
       if (line.trim() === '---' || line.trim() === '***' || line.trim() === '___') {
-        blocks.push(<hr key={blockKey++} style={{ border: 'none', borderTop: '1px solid rgba(255, 255, 255, 0.1)', margin: '1.5em 0' }} />);
+        blocks.push(<hr key={blockKey++} style={{ border: 'none', borderTop: '1px solid rgba(128, 128, 128, 0.2)', margin: '1.5em 0' }} />);
         i++;
         continue;
       }
@@ -116,8 +117,7 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
         const headingText = headingMatch[2];
         const headingStyle = {
           fontWeight: '600',
-          margin: '1.2em 0 0.6em 0',
-          color: '#f8fafc'
+          margin: '1.2em 0 0.6em 0'
         };
 
         if (level === 1) {
@@ -164,19 +164,18 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
                 borderRadius: '8px',
                 overflow: 'hidden',
                 fontSize: '0.95em',
-                border: '1px solid rgba(255, 255, 255, 0.08)'
+                border: '1px solid rgba(128, 128, 128, 0.2)'
               }}>
                 <thead>
                   <tr style={{
-                    backgroundColor: 'rgba(255, 255, 255, 0.04)',
-                    borderBottom: '1px solid rgba(255, 255, 255, 0.1)'
+                    backgroundColor: 'rgba(128, 128, 128, 0.1)',
+                    borderBottom: '2px solid rgba(128, 128, 128, 0.2)'
                   }}>
                     {headerCells.map((h, hi) => (
                       <th key={hi} style={{
                         padding: '10px 14px',
                         textAlign: 'left',
-                        fontWeight: '600',
-                        color: '#cbd5e1'
+                        fontWeight: '600'
                       }}>
                         {renderInline(h)}
                       </th>
@@ -186,13 +185,12 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
                 <tbody>
                   {dataRows.map((row, ri) => (
                     <tr key={ri} style={{
-                      borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
-                      backgroundColor: ri % 2 === 1 ? 'rgba(255, 255, 255, 0.01)' : 'transparent'
+                      borderBottom: '1px solid rgba(128, 128, 128, 0.15)',
+                      backgroundColor: ri % 2 === 1 ? 'rgba(128, 128, 128, 0.05)' : 'transparent'
                     }}>
                       {row.map((cell, ci) => (
                         <td key={ci} style={{
                           padding: '9px 14px',
-                          color: '#e2e8f0',
                           verticalAlign: 'top'
                         }}>
                           {cell.includes('<br>') ? (
@@ -266,7 +264,7 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
 
       // 8. Plain Paragraph
       blocks.push(
-        <p key={blockKey++} style={{ margin: '0.8em 0', lineHeight: '1.5', color: '#e2e8f0' }}>
+        <p key={blockKey++} style={{ margin: '0.8em 0', lineHeight: '1.5' }}>
           {renderInline(line)}
         </p>
       );

@@ -55,7 +55,7 @@ class WeatherSkill(BaseSkill):
     async def _fetch(self, forecast_days: int = 1, lat: Optional[float] = None, lon: Optional[float] = None, location: Optional[str] = None) -> tuple[dict, Optional[str]]:
         resolved_name = None
         if location and location.strip().upper() != "DEFAULT":
-            from ..tools import geocode_location, CITY_ALIASES
+            from ..tools_utils import geocode_location, CITY_ALIASES
             # Normalize alias before geocoding
             normalized_loc = CITY_ALIASES.get(location.strip().lower(), location.strip())
             res = await geocode_location(normalized_loc)
@@ -73,7 +73,7 @@ class WeatherSkill(BaseSkill):
         longitude = lon if lon is not None else self._lon
 
         if latitude == 28.6 and longitude == 77.2 and not resolved_name:
-            from ..tools import get_profile_location, geocode_location
+            from ..tools_utils import get_profile_location, geocode_location
             ploc = get_profile_location()
             if ploc:
                 res = await geocode_location(ploc)
