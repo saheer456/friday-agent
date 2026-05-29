@@ -100,7 +100,7 @@ if "%BUILD_FRONTEND%"=="1" (
     echo [BUILD] Frontend build complete.
     echo.
 ) else (
-    echo [INFO] Skipping frontend build (dist/index.html exists). Use --build to rebuild.
+    echo [INFO] Skipping frontend build [dist/index.html exists]. Use --build to rebuild.
     echo.
 )
 
