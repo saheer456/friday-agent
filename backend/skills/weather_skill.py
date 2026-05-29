@@ -52,7 +52,7 @@ class WeatherSkill(BaseSkill):
         super().__init__()
         self.configure()
 
-    async def _fetch(self, forecast_days: int = 1, lat: Optional[float] = None, lon: Optional[float] = None, location: Optional[str] = None) -> tuple[dict, Optional[str]]:
+    async def _fetch(self, forecast_days: int = 1, lat: Optional[float] = None, lon: Optional[float] = None, location: Optional[str] = None) -> dict:
         resolved_name = None
         if location and location.strip().upper() != "DEFAULT":
             from ..tools_utils import geocode_location, CITY_ALIASES
@@ -80,17 +80,86 @@ class WeatherSkill(BaseSkill):
                 if res:
                     latitude, longitude, resolved_name = res[0], res[1], res[2]
 
-        url = (
-            f"https://api.open-meteo.com/v1/forecast"
-            f"?latitude={latitude}&longitude={longitude}"
-            f"&current=temperature_2m,weathercode,windspeed_10m,relativehumidity_2m"
-            f"&daily=temperature_2m_max,temperature_2m_min"
-            f"&timezone=auto&forecast_days={forecast_days}"
-        )
-        async with httpx.AsyncClient() as client:
-            r = await client.get(url, timeout=8.0)
-        r.raise_for_status()
-        return r.json(), resolved_name
+        data = None
+        backend = None
+
+        # wttr.in only supports up to 3 days of forecast
+        if forecast_days <= 3:
+            try:
+                wttr_url = f"https://wttr.in/{latitude},{longitude}?format=j1"
+                async with httpx.AsyncClient() as client:
+                    r = await client.get(wttr_url, timeout=5.0)
+                if r.status_code == 200:
+                    wttr_data = r.json()
+                    if "current_condition" in wttr_data and "weather" in wttr_data:
+                        data = wttr_data
+                        backend = "wttr.in"
+            except Exception:
+                pass
+
+        if not data:
+            url = (
+                f"https://api.open-meteo.com/v1/forecast"
+                f"?latitude={latitude}&longitude={longitude}"
+                f"&current=temperature_2m,weathercode,windspeed_10m,relativehumidity_2m"
+                f"&daily=temperature_2m_max,temperature_2m_min"
+                f"&timezone=auto&forecast_days={forecast_days}"
+            )
+            async with httpx.AsyncClient() as client:
+                r = await client.get(url, timeout=8.0)
+            r.raise_for_status()
+            data = r.json()
+            backend = "open-meteo"
+
+        if backend == "wttr.in":
+            current_cond = data["current_condition"][0]
+            temp_c = float(current_cond["temp_C"])
+            condition = current_cond["weatherDesc"][0]["value"]
+            humidity = int(current_cond["humidity"])
+            wind_kph = float(current_cond["windspeedKmph"])
+
+            today_weather = data["weather"][0]
+            max_c = float(today_weather["maxtempC"])
+            min_c = float(today_weather["mintempC"])
+
+            forecast = []
+            for w in data["weather"][:forecast_days]:
+                forecast.append({
+                    "date": w["date"],
+                    "max_c": float(w["maxtempC"]),
+                    "min_c": float(w["mintempC"])
+                })
+        else:
+            cur = data["current"]
+            temp_c = float(cur["temperature_2m"])
+            w_code = cur.get("weathercode", cur.get("weather_code", 0))
+            condition = WMO.get(w_code, "Unknown")
+            humidity = int(cur.get("relativehumidity_2m", cur.get("relative_humidity_2m", 0)))
+            wind_kph = float(cur.get("windspeed_10m", cur.get("wind_speed_10m", 0)))
+
+            daily = data["daily"]
+            max_c = float(daily["temperature_2m_max"][0])
+            min_c = float(daily["temperature_2m_min"][0])
+
+            forecast = []
+            for i in range(len(daily["time"])):
+                forecast.append({
+                    "date": daily["time"][i],
+                    "max_c": float(daily["temperature_2m_max"][i]),
+                    "min_c": float(daily["temperature_2m_min"][i])
+                })
+
+        return {
+            "backend": backend,
+            "resolved_location": resolved_name,
+            "temp_c": temp_c,
+            "condition": condition,
+            "humidity": humidity,
+            "wind_kph": wind_kph,
+            "max_c": max_c,
+            "min_c": min_c,
+            "forecast": forecast
+        }
 
     @skill_action(
         description="Get current weather conditions for the default or a specified location.",
@@ -103,19 +172,22 @@ class WeatherSkill(BaseSkill):
     )
     async def get_current_weather(self, location: Optional[str] = None, lat: Optional[float] = None, lon: Optional[float] = None) -> SkillResult:
         try:
-            d, resolved_name = await self._fetch(forecast_days=1, lat=lat, lon=lon, location=location)
-            cur = d["current"]
-            cond = WMO.get(cur["weathercode"], "Unknown")
-            hi, lo = d["daily"]["temperature_2m_max"][0], d["daily"]["temperature_2m_min"][0]
+            parsed = await self._fetch(forecast_days=1, lat=lat, lon=lon, location=location)
+            resolved_name = parsed["resolved_location"]
             loc_prefix = f"{resolved_name}: " if resolved_name else ""
-            summary = f"{loc_prefix}{cond}, {cur['temperature_2m']}C (High {hi} / Low {lo}), Humidity {cur['relativehumidity_2m']}%, Wind {cur['windspeed_10m']} km/h"
+            summary = f"{loc_prefix}{parsed['condition']}, {parsed['temp_c']}°C (High {parsed['max_c']} / Low {parsed['min_c']}), Humidity {parsed['humidity']}%, Wind {parsed['wind_kph']} km/h"
             return SkillResult.ok(
                 message="Current weather retrieved.",
                 data={
-                    "summary": summary, "temp_c": cur["temperature_2m"],
-                    "condition": cond, "humidity": cur["relativehumidity_2m"],
-                    "wind_kph": cur["windspeed_10m"], "max_c": hi, "min_c": lo,
+                    "summary": summary,
+                    "temp_c": parsed["temp_c"],
+                    "condition": parsed["condition"],
+                    "humidity": parsed["humidity"],
+                    "wind_kph": parsed["wind_kph"],
+                    "max_c": parsed["max_c"],
+                    "min_c": parsed["min_c"],
                     "resolved_location": resolved_name,
+                    "backend": parsed["backend"]
                 },
             )
         except Exception as e:
@@ -133,18 +205,15 @@ class WeatherSkill(BaseSkill):
     )
     async def get_forecast(self, days: int = 3, location: Optional[str] = None, lat: Optional[float] = None, lon: Optional[float] = None) -> SkillResult:
         try:
-            d, resolved_name = await self._fetch(forecast_days=days, lat=lat, lon=lon, location=location)
-            daily = d["daily"]
-            entries = []
-            for i in range(len(daily["time"])):
-                entries.append({
-                    "date": daily["time"][i],
-                    "max_c": daily["temperature_2m_max"][i],
-                    "min_c": daily["temperature_2m_min"][i],
-                })
+            parsed = await self._fetch(forecast_days=days, lat=lat, lon=lon, location=location)
+            resolved_name = parsed["resolved_location"]
             return SkillResult.ok(
-                message=f"Weather forecast for {len(entries)} days at {resolved_name or 'configured location'}.",
-                data={"forecast": entries, "resolved_location": resolved_name},
+                message=f"Weather forecast for {len(parsed['forecast'])} days at {resolved_name or 'configured location'}.",
+                data={
+                    "forecast": parsed["forecast"],
+                    "resolved_location": resolved_name,
+                    "backend": parsed["backend"]
+                },
             )
         except Exception as e:
             return SkillResult.fail(f"Forecast fetch failed: {e}")
