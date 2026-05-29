@@ -63,9 +63,84 @@ def _register_default_skills() -> None:
 _register_default_skills()
 
 
-def get_tools_payload() -> Optional[List[Dict]]:
+def get_tools_payload(user_message: Optional[str] = None) -> Optional[List[Dict]]:
     schemas = skill_manager.get_tool_schemas()
-    return schemas if schemas else None
+    if not schemas:
+        return None
+    if not user_message:
+        return schemas
+
+    import re
+    lowered = user_message.lower()
+
+    categories = {
+        "weather": ["weather", "forecast", "temp", "degree", "rain", "snow", "cloudy", "wind", "humidity"],
+        "web_search": ["search", "find", "google", "web", "online", "news", "look up"],
+        "web_scrape": ["scrape", "web_scrape", "read page", "website content"],
+        "youtube": ["youtube", "video", "transcript"],
+        "code": ["code", "python", "script", "program", "developer", "coding", "bug", "debug", "compile"],
+        "terminal": ["terminal", "bash", "cmd", "command", "run", "execute", "directory", "folder", "list", "file", "read", "write", "create"],
+        "clipboard": ["clipboard", "copy", "paste"],
+        "screenshot": ["screenshot", "screen", "capture", "image", "view"],
+        "app_launcher": ["launch", "open", "start", "app", "application", "chrome", "edge", "spotify", "discord", "slack"],
+        "gmail": ["email", "mail", "inbox", "gmail", "send"],
+        "gcalendar": ["calendar", "event", "schedule", "meeting", "date", "appoint"],
+        "gdocs": ["doc", "document", "google doc", "write doc"],
+        "gsheets": ["sheet", "spreadsheet", "excel", "csv", "rows", "cell"]
+    }
+
+    matched_prefixes = set()
+    for category_name, keywords in categories.items():
+        for keyword in keywords:
+            pattern = rf"\b{re.escape(keyword)}\b"
+            if re.search(pattern, lowered):
+                matched_prefixes.add(category_name)
+                break
+
+    if "web_search" in matched_prefixes:
+        matched_prefixes.add("web_scrape")
+        matched_prefixes.add("youtube")
+
+    if "code" in matched_prefixes:
+        matched_prefixes.add("terminal")
+        matched_prefixes.add("clipboard")
+
+    def tool_matches(tool_name: str, active_categories: set[str]) -> bool:
+        if tool_name.startswith("weather_") and "weather" in active_categories:
+            return True
+        if tool_name.startswith("web_search_") and "web_search" in active_categories:
+            return True
+        if tool_name.startswith("web_scrape_") and "web_scrape" in active_categories:
+            return True
+        if tool_name.startswith("youtube_") and "youtube" in active_categories:
+            return True
+        if tool_name.startswith("code_") and "code" in active_categories:
+            return True
+        if tool_name.startswith("terminal_") and "terminal" in active_categories:
+            return True
+        if tool_name.startswith("clipboard_") and "clipboard" in active_categories:
+            return True
+        if tool_name.startswith("screenshot_") and "screenshot" in active_categories:
+            return True
+        if tool_name.startswith("app_launcher_") and "app_launcher" in active_categories:
+            return True
+        if tool_name.startswith("gmail_") and "gmail" in active_categories:
+            return True
+        if tool_name.startswith("gcalendar_") and "gcalendar" in active_categories:
+            return True
+        if tool_name.startswith("gdocs_") and "gdocs" in active_categories:
+            return True
+        if tool_name.startswith("gsheets_") and "gsheets" in active_categories:
+            return True
+        return False
+
+    if not matched_prefixes:
+        # Core categories fallback
+        core_categories = {"code", "terminal", "weather", "web_search", "app_launcher"}
+        return [t for t in schemas if tool_matches(t["function"]["name"], core_categories)]
+
+    filtered = [t for t in schemas if tool_matches(t["function"]["name"], matched_prefixes)]
+    return filtered if filtered else schemas
 
 
 def handle_tool_call(tool_name: str, tool_args_json: str) -> str:

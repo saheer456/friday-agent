@@ -301,7 +301,7 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
                 session_history.append({"role": "assistant", "content": "[Response timed out]"})
                 break
 
-            tools_payload = tool_bridge.get_tools_payload() if not skip_tool_loop else []
+            tools_payload = tool_bridge.get_tools_payload(user_message) if not skip_tool_loop else []
             full_response = ""
             last_error = ""
             tool_calls_accumulator = {}
