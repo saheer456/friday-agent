@@ -55,10 +55,19 @@ class WeatherSkill(BaseSkill):
     async def _fetch(self, forecast_days: int = 1, lat: Optional[float] = None, lon: Optional[float] = None, location: Optional[str] = None) -> tuple[dict, Optional[str]]:
         resolved_name = None
         if location and location.strip().upper() != "DEFAULT":
-            from ..tools import geocode_location
-            res = await geocode_location(location)
+            from ..tools import geocode_location, CITY_ALIASES
+            # Normalize alias before geocoding
+            normalized_loc = CITY_ALIASES.get(location.strip().lower(), location.strip())
+            res = await geocode_location(normalized_loc)
             if res:
                 lat, lon, resolved_name = res
+            else:
+                # Return a sentinel that callers convert to SkillResult.fail
+                raise ValueError(
+                    f"Could not find location '{location}'"
+                    + (f" (tried '{normalized_loc}')" if normalized_loc != location.strip() else "")
+                    + ". Please check the spelling or try a nearby major city."
+                )
 
         latitude = lat if lat is not None else self._lat
         longitude = lon if lon is not None else self._lon

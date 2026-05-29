@@ -49,7 +49,8 @@ export function Header({ version, statusText, isBusy, isSpeaking = false, onClea
             type="button"
             className={styles.btnClear}
             onClick={onToggleMemories}
-            aria-label="Toggle memories"
+            aria-label="Memory & Knowledge Graph"
+            title="Memory & Knowledge Graph"
           >
             <Database size={18} />
           </button>

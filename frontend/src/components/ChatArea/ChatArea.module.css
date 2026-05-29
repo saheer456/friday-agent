@@ -15,54 +15,37 @@
   transition: outline 0.2s ease;
 }
 
-/* ── Welcome ─── */
+/* ── Welcome (minimal — greeting streams in from AI) ─── */
 .welcome {
   height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  text-align: center;
-  gap: 10px;
+  gap: 16px;
 }
+
+.welcomeOrb {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--primary-dim);
+  border: 2px solid var(--primary-border);
+  animation: orb-pulse 1.6s ease-in-out infinite alternate;
+}
+
+@keyframes orb-pulse {
+  from { box-shadow: 0 0 8px rgba(74,124,89,0.15); transform: scale(0.96); }
+  to   { box-shadow: 0 0 24px rgba(74,124,89,0.35); transform: scale(1.04); }
+}
+
 .welcomeLine {
   font-family: var(--font-head);
-  font-size: 1.5rem;
+  font-size: 0.88rem;
   font-weight: 600;
-  color: var(--text);
-  font-style: italic;
-}
-.welcomeSub {
-  font-size: 0.9rem;
   color: var(--text-muted);
-  max-width: 420px;
-  line-height: 1.6;
-  margin-bottom: 12px;
-}
-.suggestions {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  width: 100%;
-  max-width: 380px;
-}
-.suggestBtn {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  color: var(--text);
-  padding: 12px 18px;
-  border-radius: 8px;
-  font-size: 0.85rem;
-  font-weight: 500;
-  text-align: left;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-}
-.suggestBtn:hover {
-  background: var(--border);
-  border-color: var(--text-muted);
-  transform: translateY(-1px);
+  font-style: italic;
+  letter-spacing: 0.5px;
 }
 
 /* ── Messages ─── */

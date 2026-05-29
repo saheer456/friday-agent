@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Message, Phase } from '../types/api';
 import { authFetch } from '../lib/api';
 import { clearLocalMemory, retrieveLocalMemory, saveLocalMemory } from '../lib/localMemory';
@@ -17,14 +17,17 @@ export function useChat(
   const [isBusy, setIsBusy] = useState(false);
   const { limitedMode = false } = options;
 
-  // Reconnect states
   const [reconnectCount, setReconnectCount] = useState(0);
   const [isReconnecting, setIsReconnecting] = useState(false);
 
-  // Session states
   const [sessions, setSessions] = useState<{ id: string; title: string; created_at?: string }[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string>('default-session');
+  const [activeSessionId, setActiveSessionId] = useState<string>('');
   const [activeSessionFiles, setActiveSessionFiles] = useState<string[]>([]);
+
+  // Track whether the first user message has been sent (for auto-rename)
+  const firstMsgSentRef = useRef(false);
+  const activeSessionIdRef = useRef(activeSessionId);
+  useEffect(() => { activeSessionIdRef.current = activeSessionId; }, [activeSessionId]);
 
   const addSystemMessage = useCallback((text: string) => {
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -46,6 +49,7 @@ export function useChat(
 
   const selectSession = useCallback(async (sessionId: string) => {
     setActiveSessionId(sessionId);
+    firstMsgSentRef.current = false;
     if (limitedMode) return;
     try {
       const res = await authFetch(`/api/sessions/${sessionId}/messages`);
@@ -77,19 +81,89 @@ export function useChat(
             timestamp: timeStr,
           };
         });
-        setMessages(mappedMessages.length > 0 ? mappedMessages : [{
-          id: `m-${sessionId}-welcome`,
-          role: 'assistant',
-          content: 'Session connected, sir. Ask anything when ready.',
-          streaming: false,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
-        }]);
+        setMessages(mappedMessages.length > 0 ? mappedMessages : []);
         setActiveSessionFiles(data.files || []);
+        if (mappedMessages.length > 0) {
+          firstMsgSentRef.current = true;
+        }
       }
     } catch (e) {
       console.error('Error loading session messages:', e);
     }
   }, [limitedMode]);
+
+  // ── Personalized streaming greeting ──────────────────────────
+  const fetchGreeting = useCallback(async () => {
+    const greetingId = `greeting-${Date.now()}`;
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+
+    // Insert a streaming bubble immediately
+    setMessages([{
+      id: greetingId,
+      role: 'assistant',
+      content: '',
+      streaming: true,
+      timestamp: timeStr,
+      isGreeting: true,
+    } as any]);
+
+    try {
+      const res = await authFetch('/api/greeting');
+      if (!res.ok || !res.body) throw new Error('Greeting unavailable');
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let fullText = '';
+      let suggestionsData: string[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let idx: number;
+        while ((idx = buffer.indexOf('\n\n')) >= 0) {
+          const raw = buffer.slice(0, idx).trim();
+          buffer = buffer.slice(idx + 2);
+          if (!raw.startsWith('data:')) continue;
+          const data = raw.slice(5).trim();
+          if (data === '[DONE]') break;
+
+          let obj: any;
+          try { obj = JSON.parse(data); } catch { continue; }
+
+          if (obj.type === 'token' && obj.text) {
+            fullText += obj.text;
+            setMessages(prev =>
+              prev.map(m => m.id === greetingId ? { ...m, content: fullText } : m)
+            );
+          }
+          if (obj.type === 'suggestions') {
+            suggestionsData = obj.suggestions || [];
+          }
+        }
+      }
+
+      // Mark streaming complete, attach suggestions
+      setMessages(prev =>
+        prev.map(m => m.id === greetingId
+          ? { ...m, streaming: false, content: fullText, suggestions: suggestionsData } as any
+          : m)
+      );
+    } catch {
+      // Fallback to a warm static greeting
+      setMessages([{
+        id: greetingId,
+        role: 'assistant',
+        content: "Systems nominal, sir. What are we working on today?",
+        streaming: false,
+        timestamp: timeStr,
+        isGreeting: true,
+        suggestions: ['What is the weather today?', 'Search the web for latest AI news', 'Give me a daily briefing'],
+      } as any]);
+    }
+  }, []);
 
   const createSession = useCallback(async (title?: string) => {
     if (limitedMode) return;
@@ -102,12 +176,17 @@ export function useChat(
       });
       if (res.ok) {
         await fetchSessions();
-        await selectSession(newId);
+        setActiveSessionId(newId);
+        firstMsgSentRef.current = false;
+        setMessages([]);
+        setActiveSessionFiles([]);
+        // Fetch personalized greeting for the fresh session
+        await fetchGreeting();
       }
     } catch (e) {
       console.error('Error creating session:', e);
     }
-  }, [limitedMode, fetchSessions, selectSession]);
+  }, [limitedMode, fetchSessions, fetchGreeting]);
 
   const deleteSession = useCallback(async (sessionId: string) => {
     if (limitedMode) return;
@@ -116,15 +195,17 @@ export function useChat(
       if (res.ok) {
         const remaining = sessions.filter(s => s.id !== sessionId);
         setSessions(remaining);
-        
-        const nextSessionId = remaining.length > 0 ? remaining[0].id : 'default-session';
-        await selectSession(nextSessionId);
+        if (remaining.length > 0) {
+          await selectSession(remaining[0].id);
+        } else {
+          await createSession();
+        }
         await fetchSessions();
       }
     } catch (e) {
       console.error('Error deleting session:', e);
     }
-  }, [limitedMode, sessions, fetchSessions, selectSession]);
+  }, [limitedMode, sessions, fetchSessions, selectSession, createSession]);
 
   const renameSession = useCallback(async (sessionId: string, newTitle: string) => {
     if (limitedMode) return;
@@ -135,13 +216,12 @@ export function useChat(
         body: JSON.stringify({ title: newTitle }),
       });
       if (res.ok) {
-        await fetchSessions();
         setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, title: newTitle } : s));
       }
     } catch (e) {
       console.error('Error renaming session:', e);
     }
-  }, [limitedMode, fetchSessions]);
+  }, [limitedMode]);
 
   const clearChat = useCallback(async () => {
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -162,19 +242,21 @@ export function useChat(
       }]);
       setPhases([]);
       setActiveSessionFiles([]);
+      firstMsgSentRef.current = false;
       onStatusChange('Online', false);
     } catch {
       onStatusChange('Clear failed', false);
     }
   }, [limitedMode, activeSessionId, onStatusChange]);
 
+  // On mount: create a fresh session (never reuse default-session)
   useEffect(() => {
     if (!limitedMode) {
       fetchSessions().then(() => {
-        selectSession('default-session');
+        createSession();
       });
     }
-  }, [limitedMode]);
+  }, [limitedMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sendMessage = useCallback(async (text: string, isVoiceMode: boolean) => {
     if (!text.trim()) return;
@@ -193,6 +275,14 @@ export function useChat(
     setIsBusy(true);
     onStatusChange('Neural pipeline…', true);
 
+    // Auto-rename session after first user message
+    const currentSessionId = activeSessionIdRef.current;
+    if (!firstMsgSentRef.current && currentSessionId) {
+      firstMsgSentRef.current = true;
+      const title = text.trim().slice(0, 42).replace(/\s+/g, ' ') + (text.trim().length > 42 ? '…' : '');
+      renameSession(currentSessionId, title);
+    }
+
     let attempt = 0;
     const maxRetries = 3;
     let success = false;
@@ -209,7 +299,7 @@ export function useChat(
         const endpoint = limitedMode ? '/api/chat/limited/stream' : '/api/chat/stream';
         const payload = limitedMode
           ? { message: text, local_context: retrieveLocalMemory(text) }
-          : { message: text, voice_mode: isVoiceMode, session_id: activeSessionId };
+          : { message: text, voice_mode: isVoiceMode, session_id: currentSessionId };
           
         const res = await authFetch(endpoint, {
           method: 'POST',
@@ -227,6 +317,10 @@ export function useChat(
         let fullText  = '';
         let sawToken  = false;
         let streamDone = false;
+
+        // Plan steps collector
+        let planSteps: { title: string; detail: string; done: boolean }[] = [];
+        let planMsgId: string | null = null;
 
         outer: while (!streamDone) {
           const { done, value } = await reader.read();
@@ -249,6 +343,15 @@ export function useChat(
               setMessages(prev =>
                 prev.map(m => m.id === aiMsgId ? { ...m, streaming: false, content: finalText } : m)
               );
+              // Mark plan as complete
+              if (planMsgId) {
+                const finalSteps = planSteps.map(s => ({ ...s, done: true }));
+                setMessages(prev =>
+                  prev.map(m => m.id === planMsgId
+                    ? { ...m, planDone: true, planSteps: finalSteps } as any
+                    : m)
+                );
+              }
               if (finalText.trim()) {
                 if (limitedMode) saveLocalMemory(text, finalText);
                 else queueTTS(finalText);
@@ -263,8 +366,51 @@ export function useChat(
             if (obj.type === 'error') throw new Error(obj.message || 'Stream error');
 
             if (obj.type === 'phase') {
-              setPhases(p => [...p, obj as Phase]);
-              onStatusChange(obj.title || 'Working…', true);
+              const phase = obj as Phase;
+
+              // Planner steps → inject inline PlanCard into chat
+              if (phase.id && (phase.id.startsWith('plan_step') || phase.id === 'planner')) {
+                if (phase.id === 'planner') {
+                  // Create the plan card message
+                  planMsgId = `plan-${Date.now()}`;
+                  planSteps = [];
+                  setMessages(prev => {
+                    const planMsg = {
+                      id: planMsgId!,
+                      role: 'plan' as any,
+                      content: phase.detail || '',
+                      streaming: false,
+                      timestamp: timeStr,
+                      planSteps: [],
+                      planDone: false,
+                    } as any;
+                    // Insert before the streaming AI bubble
+                    const withoutAI = prev.filter(m => m.id !== aiMsgId);
+                    return [...withoutAI, planMsg, prev.find(m => m.id === aiMsgId)!];
+                  });
+                } else {
+                  // Add step to existing plan card
+                  const stepTitle = phase.title || '';
+                  const stepDetail = phase.detail || '';
+                  // Mark previous steps as done
+                  planSteps = planSteps.map(s => ({ ...s, done: true }));
+                  planSteps = [...planSteps, { title: stepTitle, detail: stepDetail, done: false }];
+                  if (planMsgId) {
+                    const stepsSnapshot = [...planSteps];
+                    setMessages(prev =>
+                      prev.map(m => m.id === planMsgId
+                        ? { ...m, planSteps: stepsSnapshot } as any
+                        : m)
+                    );
+                  }
+                }
+                // Also show in status bar
+                onStatusChange(phase.title || 'Planning…', true);
+              } else {
+                // Non-planner phases go to telemetry panel
+                setPhases(p => [...p, phase]);
+                onStatusChange(phase.title || 'Working…', true);
+              }
             }
 
             if (obj.type === 'token' && obj.text) {
@@ -310,7 +456,7 @@ export function useChat(
 
     setIsBusy(false);
     onStatusChange('Online', false);
-  }, [limitedMode, activeSessionId, onStatusChange, queueTTS]);
+  }, [limitedMode, onStatusChange, queueTTS, renameSession]);
 
   const unlinkFile = useCallback(async (filename: string) => {
     if (limitedMode) return;

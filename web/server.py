@@ -359,6 +359,127 @@ async def auth_me(credentials: HTTPAuthorizationCredentials | None = Security(_b
     }
 
 
+@app.get("/api/greeting")
+async def get_greeting(_auth: dict = Depends(verify_user_auth)):
+    from backend.brain import _load_profile
+    from backend.memory import long_term
+    from backend.providers import provider_manager
+    from datetime import datetime
+
+    # 1. Get current time-of-day and weekday
+    now = datetime.now()
+    hour = now.hour
+    if 5 <= hour < 12:
+        time_of_day = "morning"
+    elif 12 <= hour < 17:
+        time_of_day = "afternoon"
+    elif 17 <= hour < 22:
+        time_of_day = "evening"
+    else:
+        time_of_day = "night"
+    weekday = now.strftime("%A")
+
+    # 2. Retrieve recent memories
+    try:
+        memories = await long_term.retrieve_recent_memories(limit=3)
+        memory_texts = [m["content"] for m in memories if m.get("content")]
+    except Exception as e:
+        print(f"[GREETING] Failed to retrieve memories: {e}")
+        memory_texts = []
+
+    # 3. Load user profile
+    try:
+        profile_text = _load_profile()
+    except Exception as e:
+        print(f"[GREETING] Failed to load profile: {e}")
+        profile_text = ""
+
+    # 4. Construct prompt
+    memories_bullet = "\n".join([f"- {text}" for text in memory_texts]) if memory_texts else "No recent memories."
+    
+    prompt = f"""You are FRIDAY, a warm, witty AI assistant. 
+Time of day: {time_of_day}. Day: {weekday}.
+User profile: {profile_text}.
+Recent memories:
+{memories_bullet}
+
+Generate a single warm, personalized greeting (1–2 sentences MAX).
+Rules:
+- Address the user as 'sir'
+- Do NOT always start with 'Hello' or 'Hi' — vary the opening
+- If memory is available, reference something specific from it
+- Never be generic or robotic
+- Markdown is allowed (bold/italic sparingly)
+Output ONLY the greeting, nothing else."""
+
+    # 5. Determine suggestions programmatically
+    suggestions = []
+    # Suggestion 1: Memory-aware
+    found_project = None
+    mem_search_space = (" ".join(memory_texts)).lower()
+    for proj in ["Expense Tracker", "Pandora Website", "Tabeer Brand", "Local Service Marketplace", "GraphRAG"]:
+        if proj.lower() in mem_search_space:
+            found_project = proj
+            break
+    if found_project:
+        suggestions.append(f"Continue {found_project} work?")
+    elif memory_texts:
+        first_mem = memory_texts[0]
+        if len(first_mem) > 40:
+            suggestions.append(f"About: {first_mem[:35]}…")
+        else:
+            suggestions.append(first_mem)
+    else:
+        suggestions.append("Continue my last project")
+
+    # Suggestion 2: Time-of-day contextual
+    if time_of_day == "morning":
+        suggestions.append("Give me a daily briefing")
+    elif time_of_day == "afternoon":
+        suggestions.append("What's on my agenda today?")
+    elif time_of_day == "evening":
+        suggestions.append("Summarize my progress today")
+    else:
+        suggestions.append("What's the weather like?")
+
+    # Suggestion 3: General/Utility
+    suggestions.append("Search the web for latest AI news")
+
+    # 6. Stream the LLM response
+    async def event_generator():
+        try:
+            messages = [{"role": "system", "content": prompt}]
+            async for ev in provider_manager.stream(messages, is_heavy=False, temperature=0.8, max_tokens=100):
+                if ev.get("type") == "text":
+                    chunk = ev.get("text", "")
+                    if chunk:
+                        yield f"data: {json.dumps({'type': 'token', 'text': chunk}, ensure_ascii=False)}\n\n"
+                elif ev.get("type") == "error":
+                    err_msg = ev.get("error", "Failed generating greeting")
+                    yield f"data: {json.dumps({'type': 'error', 'message': err_msg}, ensure_ascii=False)}\n\n"
+                    return
+            
+            # Send suggestions
+            yield f"data: {json.dumps({'type': 'suggestions', 'suggestions': suggestions}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            err = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
+            yield f"data: {err}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+
+
 @app.get("/")
 async def index():
     dist_index = ROOT / "frontend" / "dist" / "index.html"
@@ -714,8 +835,6 @@ async def get_session_messages(session_id: str, _auth: dict = Depends(verify_aut
     messages = await chat_history.get_latest_chat_messages(session_id, limit=100)
     files = await chat_history.get_session_files(session_id)
     return {"messages": messages, "files": files}
-
-
 class MemoryAddBody(BaseModel):
     content: str = Field(..., min_length=1, max_length=4_000)
     category: str = Field(default="manual", max_length=100)
@@ -732,6 +851,46 @@ async def list_memories(
     memories = await long_term.list_memories(limit=limit, offset=offset)
     total = await long_term.count_memories()
     return {"memories": memories, "total": total, "limit": limit, "offset": offset}
+
+
+@app.get("/api/graph/nodes")
+async def search_graph_nodes_api(
+    q: str = "",
+    _auth: dict = Depends(verify_auth),
+):
+    """Search graph nodes by name/description keyword."""
+    from backend.memory import long_term
+    if not q.strip():
+        return {"nodes": [], "edges": []}
+    nodes = await long_term.search_graph_nodes(q.strip())
+    node_ids = [n["id"] for n in nodes]
+    graph = await long_term.get_graph_neighbors(node_ids, depth=1)
+    return {"nodes": graph["nodes"], "edges": graph["edges"], "query": q}
+
+
+@app.get("/api/graph/all")
+async def get_all_graph_nodes(
+    limit: int = 60,
+    _auth: dict = Depends(verify_auth),
+):
+    """Return top N nodes with their 1-hop edges for the graph visualisation panel."""
+    from backend.memory import long_term
+    try:
+        conn = await long_term._get_sq_conn()
+        async with conn.execute(
+            "SELECT id, name, type, description FROM graph_nodes LIMIT ?", (limit,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            nodes = [dict(r) for r in rows]
+    except Exception:
+        nodes = []
+
+    if not nodes:
+        return {"nodes": [], "edges": []}
+
+    node_ids = [n["id"] for n in nodes]
+    graph = await long_term.get_graph_neighbors(node_ids, depth=1)
+    return {"nodes": graph["nodes"], "edges": graph["edges"]}
 
 
 @app.delete("/api/memories/{memory_id}")

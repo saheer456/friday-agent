@@ -106,6 +106,27 @@ async def _get_sq_conn():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        await _db_conn.execute('''
+            CREATE TABLE IF NOT EXISTS graph_nodes (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                description TEXT
+            )
+        ''')
+        await _db_conn.execute('''
+            CREATE TABLE IF NOT EXISTS graph_edges (
+                source TEXT,
+                target TEXT,
+                relation TEXT,
+                weight REAL DEFAULT 1.0,
+                PRIMARY KEY (source, target, relation),
+                FOREIGN KEY (source) REFERENCES graph_nodes(id) ON DELETE CASCADE,
+                FOREIGN KEY (target) REFERENCES graph_nodes(id) ON DELETE CASCADE
+            )
+        ''')
+        await _db_conn.execute('CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source)')
+        await _db_conn.execute('CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target)')
         await _db_conn.commit()
     return _db_conn
 
@@ -204,3 +225,155 @@ async def count_memories() -> int:
     if _use_supabase():
         return await _sb_count()
     return await _sq_count()
+
+
+async def upsert_graph_node(node_id: str, name: str, node_type: str, description: str = "") -> None:
+    if _use_supabase():
+        try:
+            from backend.supabase_client import get_client
+            sb = await get_client()
+            if sb is not None:
+                await sb.table("graph_nodes").upsert({
+                    "id": node_id,
+                    "name": name,
+                    "type": node_type,
+                    "description": description
+                }).execute()
+                return
+        except Exception as e:
+            logger.warning(f"Supabase graph_nodes upsert failed: {e}. Falling back to SQLite.")
+
+    try:
+        conn = await _get_sq_conn()
+        await conn.execute('''
+            INSERT INTO graph_nodes (id, name, type, description)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name,
+                type=excluded.type,
+                description=coalesce(nullif(excluded.description, ''), description)
+        ''', (node_id, name, node_type, description))
+        await conn.commit()
+    except Exception as e:
+        logger.error(f"SQLite upsert_graph_node failed: {e}")
+
+
+async def add_graph_edge(source: str, target: str, relation: str, weight: float = 1.0) -> None:
+    if _use_supabase():
+        try:
+            from backend.supabase_client import get_client
+            sb = await get_client()
+            if sb is not None:
+                await sb.table("graph_edges").upsert({
+                    "source": source,
+                    "target": target,
+                    "relation": relation,
+                    "weight": weight
+                }).execute()
+                return
+        except Exception as e:
+            logger.warning(f"Supabase graph_edges upsert failed: {e}. Falling back to SQLite.")
+
+    try:
+        conn = await _get_sq_conn()
+        await conn.execute('''
+            INSERT INTO graph_edges (source, target, relation, weight)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(source, target, relation) DO UPDATE SET
+                weight=excluded.weight
+        ''', (source, target, relation, weight))
+        await conn.commit()
+    except Exception as e:
+        logger.error(f"SQLite add_graph_edge failed: {e}")
+
+
+async def search_graph_nodes(query_term: str) -> List[Dict]:
+    if _use_supabase():
+        try:
+            from backend.supabase_client import get_client
+            sb = await get_client()
+            if sb is not None:
+                res = await sb.table("graph_nodes").select("*").ilike("name", f"%{query_term}%").limit(20).execute()
+                return res.data or []
+        except Exception as e:
+            logger.warning(f"Supabase search_graph_nodes failed: {e}. Falling back to SQLite.")
+
+    try:
+        conn = await _get_sq_conn()
+        async with conn.execute(
+            "SELECT id, name, type, description FROM graph_nodes WHERE name LIKE ? OR description LIKE ? LIMIT 20",
+            (f"%{query_term}%", f"%{query_term}%")
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+    except Exception as e:
+        logger.error(f"SQLite search_graph_nodes failed: {e}")
+        return []
+
+
+async def get_graph_neighbors(node_ids: List[str], depth: int = 1) -> Dict[str, List[Dict]]:
+    if not node_ids:
+        return {"nodes": [], "edges": []}
+
+    if _use_supabase():
+        try:
+            from backend.supabase_client import get_client
+            sb = await get_client()
+            if sb is not None:
+                res = await sb.table("graph_edges").select("source, target, relation, weight").in_("source", node_ids).execute()
+                edges = res.data or []
+                target_ids = list(set([e["target"] for e in edges] + [e["source"] for e in edges]))
+                if target_ids:
+                    nodes_res = await sb.table("graph_nodes").select("*").in_("id", target_ids).execute()
+                    nodes = nodes_res.data or []
+                else:
+                    nodes = []
+                return {"nodes": nodes, "edges": edges}
+        except Exception as e:
+            logger.warning(f"Supabase graph query failed: {e}. Falling back to SQLite.")
+
+    try:
+        conn = await _get_sq_conn()
+        visited_nodes = set(node_ids)
+        current_layer = set(node_ids)
+        all_edges = []
+
+        for _ in range(depth):
+            if not current_layer:
+                break
+            placeholders = ",".join(["?"] * len(current_layer))
+            query = f'''
+                SELECT source, target, relation, weight 
+                FROM graph_edges 
+                WHERE source IN ({placeholders}) OR target IN ({placeholders})
+            '''
+            params = list(current_layer) + list(current_layer)
+            async with conn.execute(query, params) as cursor:
+                rows = await cursor.fetchall()
+                next_layer = set()
+                for row in rows:
+                    edge = dict(row)
+                    all_edges.append(edge)
+                    
+                    src, tgt = edge["source"], edge["target"]
+                    if src not in visited_nodes:
+                        next_layer.add(src)
+                        visited_nodes.add(src)
+                    if tgt not in visited_nodes:
+                        next_layer.add(tgt)
+                        visited_nodes.add(tgt)
+            current_layer = next_layer
+
+        if visited_nodes:
+            placeholders = ",".join(["?"] * len(visited_nodes))
+            query = f'SELECT id, name, type, description FROM graph_nodes WHERE id IN ({placeholders})'
+            async with conn.execute(query, list(visited_nodes)) as cursor:
+                rows = await cursor.fetchall()
+                nodes = [dict(row) for row in rows]
+        else:
+            nodes = []
+            
+        return {"nodes": nodes, "edges": all_edges}
+    except Exception as e:
+        logger.error(f"SQLite get_graph_neighbors failed: {e}")
+        return {"nodes": [], "edges": []}

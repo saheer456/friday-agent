@@ -44,6 +44,21 @@ APP_ALIASES = {
     "spotify":"spotify", "discord":"discord", "slack":"slack",
 }
 
+# Common city aliases / alternate spellings (especially Indian cities)
+CITY_ALIASES: dict[str, str] = {
+    "banglore": "Bengaluru", "bangalore": "Bengaluru", "bengalore": "Bengaluru",
+    "bombay": "Mumbai", "bombai": "Mumbai",
+    "madras": "Chennai", "madrass": "Chennai",
+    "calcutta": "Kolkata", "kolkatta": "Kolkata", "calicut": "Kozhikode",
+    "poona": "Pune", "cochin": "Kochi", "kochin": "Kochi",
+    "trivandrum": "Thiruvananthapuram", "trissur": "Thrissur", "trichur": "Thrissur",
+    "mysore": "Mysuru", "mangalore": "Mangaluru", "hubli": "Hubballi",
+    "vizag": "Visakhapatnam", "baroda": "Vadodara",
+    "new delhi": "New Delhi", "delhi": "New Delhi",
+    "bombay": "Mumbai", "hydrabad": "Hyderabad", "hydrabad": "Hyderabad",
+}
+
+
 def get_profile_location() -> Optional[str]:
     import json
     from pathlib import Path
@@ -58,15 +73,26 @@ def get_profile_location() -> Optional[str]:
     return None
 
 
+import logging as _logging
+_geo_logger = _logging.getLogger("Geocoder")
+
+
 async def geocode_location(location: str) -> Optional[tuple[float, float, str]]:
     """Geocodes a location name using Open-Meteo's geocoding API.
     Returns (lat, lon, resolved_name) or None.
+    Applies CITY_ALIASES normalization for common misspellings.
     """
     import urllib.parse
     if not location or not location.strip():
         return None
+
+    # Normalize via alias map
+    normalized = CITY_ALIASES.get(location.strip().lower(), location.strip())
+    if normalized != location.strip():
+        _geo_logger.info(f"[Geocoder] Alias resolved: '{location}' → '{normalized}'")
+
     try:
-        encoded_loc = urllib.parse.quote(location.strip())
+        encoded_loc = urllib.parse.quote(normalized)
         geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={encoded_loc}&count=1&language=en&format=json"
         async with httpx.AsyncClient(timeout=5.0) as client:
             r = await client.get(geo_url)
@@ -76,14 +102,18 @@ async def geocode_location(location: str) -> Optional[tuple[float, float, str]]:
                 res = data["results"][0]
                 lat = float(res["latitude"])
                 lon = float(res["longitude"])
-                resolved_name = res.get("name")
+                resolved_name = res.get("name", normalized)
                 if res.get("admin1"):
                     resolved_name += f", {res.get('admin1')}"
                 if res.get("country"):
                     resolved_name += f", {res.get('country')}"
                 return lat, lon, resolved_name
-    except Exception:
-        pass
+            else:
+                _geo_logger.warning(f"[Geocoder] No results for '{normalized}' (original: '{location}')")
+        else:
+            _geo_logger.warning(f"[Geocoder] Geocoding API returned HTTP {r.status_code} for '{normalized}'")
+    except Exception as exc:
+        _geo_logger.warning(f"[Geocoder] Exception geocoding '{normalized}': {exc}")
     return None
 
 
