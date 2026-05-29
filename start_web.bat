@@ -65,42 +65,45 @@ goto :start_server
 )
 
 REM ─────────────────────────────────────────────────────────────
-REM Build frontend if needed
+REM Build frontend if needed or requested
 REM ─────────────────────────────────────────────────────────────
 
+set BUILD_FRONTEND=0
+if "%1"=="--build" set BUILD_FRONTEND=1
+if "%1"=="-b" set BUILD_FRONTEND=1
+if "%2"=="--build" set BUILD_FRONTEND=1
+if "%2"=="-b" set BUILD_FRONTEND=1
+
 if not exist "frontend\dist\index.html" (
-echo [BUILD] Frontend dist missing — building...
-cd frontend
-
-call npm install
-if errorlevel 1 (
-    echo [ERROR] npm install failed.
-    pause
-    exit /b 1
+    set BUILD_FRONTEND=1
 )
 
-call npm run build
-if errorlevel 1 (
-    echo [ERROR] Frontend build failed.
-    pause
-    exit /b 1
+if "%BUILD_FRONTEND%"=="1" (
+    echo [BUILD] Frontend build requested or missing — compiling...
+    cd frontend
+    if not exist "node_modules" (
+        echo [BUILD] Installing npm packages...
+        call npm install
+        if errorlevel 1 (
+            echo [ERROR] npm install failed.
+            pause
+            exit /b 1
+        )
+    )
+    call npm run build
+    if errorlevel 1 (
+        echo [ERROR] Frontend build failed.
+        pause
+        exit /b 1
+    )
+    cd ..
+    echo [BUILD] Frontend build complete.
+    echo.
+) else (
+    echo [INFO] Skipping frontend build (dist/index.html exists). Use --build to rebuild.
+    echo.
 )
 
-cd ..
-echo [BUILD] Frontend build complete.
-echo.
-)
-
-cd frontend
-call npm run build
-if errorlevel 1 (
-    echo [ERROR] Frontend build failed.
-    pause
-    exit /b 1
-)
-cd ..
-echo [BUILD] Frontend build complete.
-echo.
 
 :start_server
 

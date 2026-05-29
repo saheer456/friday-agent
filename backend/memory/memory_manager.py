@@ -24,8 +24,8 @@ class MemoryManager:
         from . import chat_history
         await chat_history.init_chat_history_db()
         short_term.clear_buffer()
-        # Fire up the semantic layer (model load is blocking internally but wrapped async)
-        await _sem_initialize()
+        # Fire up the semantic layer in the background (FastEmbed model loading is deferred to a background task)
+        asyncio.create_task(_sem_initialize())
 
     @classmethod
     async def save_memory(cls, user_msg: str, ai_response: str) -> None:
