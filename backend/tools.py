@@ -47,6 +47,7 @@ APP_ALIASES = {
 # Common city aliases / alternate spellings (especially Indian cities)
 CITY_ALIASES: dict[str, str] = {
     "banglore": "Bengaluru", "bangalore": "Bengaluru", "bengalore": "Bengaluru",
+    "banglure": "Bengaluru", "bangluru": "Bengaluru", "bengaluru": "Bengaluru",
     "bombay": "Mumbai", "bombai": "Mumbai",
     "madras": "Chennai", "madrass": "Chennai",
     "calcutta": "Kolkata", "kolkatta": "Kolkata", "calicut": "Kozhikode",
@@ -55,7 +56,7 @@ CITY_ALIASES: dict[str, str] = {
     "mysore": "Mysuru", "mangalore": "Mangaluru", "hubli": "Hubballi",
     "vizag": "Visakhapatnam", "baroda": "Vadodara",
     "new delhi": "New Delhi", "delhi": "New Delhi",
-    "bombay": "Mumbai", "hydrabad": "Hyderabad", "hydrabad": "Hyderabad",
+    "hydrabad": "Hyderabad",
 }
 
 

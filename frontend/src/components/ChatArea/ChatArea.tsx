@@ -1,9 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import rehypeHighlight from 'rehype-highlight';
 import { Copy, Check } from 'lucide-react';
 import type { Message } from '../../types/api';
-import { StreamMarkdown } from './StreamMarkdown';
+import { MarkdownRenderer } from './MarkdownRenderer';
 import { PlanCard } from './PlanCard';
 import { GreetingSuggestions } from './GreetingSuggestions';
 import styles from './ChatArea.module.css';
@@ -107,13 +105,11 @@ export function ChatArea({ messages, isSpeaking, onDropFile, onSelectSuggestion 
                       m.content
                     ) : m.streaming ? (
                       <>
-                        <StreamMarkdown content={m.content} />
+                        <MarkdownRenderer content={m.content} />
                         <span className={styles.cursor}>▋</span>
                       </>
                     ) : (
-                      <ReactMarkdown rehypePlugins={[rehypeHighlight]}>
-                        {m.content}
-                      </ReactMarkdown>
+                      <MarkdownRenderer content={m.content} />
                     )}
                   </div>
                 </div>
