@@ -1,10 +1,12 @@
 import React from 'react';
+import styles from './ChatArea.module.css';
 
 interface MarkdownRendererProps {
   content: string;
+  isStreaming?: boolean;
 }
 
-export function MarkdownRenderer({ content }: MarkdownRendererProps) {
+export function MarkdownRenderer({ content, isStreaming }: MarkdownRendererProps) {
   // Parse inline elements: **bold**, *italic*, `code`, and [links](url)
   const renderInline = (text: string): React.ReactNode[] => {
     const parts: React.ReactNode[] = [];
@@ -274,5 +276,57 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
     return blocks;
   };
 
-  return <div className="markdown-renderer-body" style={{ width: '100%' }}>{parseBlocks(content)}</div>;
+  const appendCursorToNode = (node: React.ReactNode, cursorNode: React.ReactNode): React.ReactNode => {
+    if (!node) return cursorNode;
+
+    if (typeof node === 'string') {
+      return (
+        <>
+          {node}
+          {cursorNode}
+        </>
+      );
+    }
+
+    if (Array.isArray(node)) {
+      if (node.length === 0) return [cursorNode];
+      const lastIdx = node.length - 1;
+      const updatedLast = appendCursorToNode(node[lastIdx], cursorNode);
+      return [...node.slice(0, lastIdx), updatedLast];
+    }
+
+    if (React.isValidElement(node)) {
+      const type = node.type;
+      if (type === 'hr' || type === 'br' || type === 'img') {
+        return (
+          <>
+            {node}
+            {cursorNode}
+          </>
+        );
+      }
+      const children = (node.props as any).children;
+      if (children === undefined || children === null) {
+        return React.cloneElement(node as React.ReactElement, undefined, cursorNode);
+      }
+      const updatedChildren = appendCursorToNode(children, cursorNode);
+      return React.cloneElement(node as React.ReactElement, undefined, updatedChildren);
+    }
+
+    return (
+      <>
+        {node}
+        {cursorNode}
+      </>
+    );
+  };
+
+  const blocks = parseBlocks(content);
+  if (isStreaming && blocks.length > 0) {
+    const lastIdx = blocks.length - 1;
+    const cursorNode = <span className={styles.cursor} />;
+    blocks[lastIdx] = appendCursorToNode(blocks[lastIdx], cursorNode);
+  }
+
+  return <div className="markdown-renderer-body" style={{ width: '100%' }}>{blocks}</div>;
 }

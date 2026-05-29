@@ -103,13 +103,8 @@ export function ChatArea({ messages, isSpeaking, onDropFile, onSelectSuggestion 
                   <div className={styles.msgBody}>
                     {m.role === 'user' ? (
                       m.content
-                    ) : m.streaming ? (
-                      <>
-                        <MarkdownRenderer content={m.content} />
-                        <span className={styles.cursor}>▋</span>
-                      </>
                     ) : (
-                      <MarkdownRenderer content={m.content} />
+                      <MarkdownRenderer content={m.content} isStreaming={m.streaming} />
                     )}
                   </div>
                 </div>

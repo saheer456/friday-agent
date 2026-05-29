@@ -164,15 +164,18 @@
 /* Streaming cursor */
 .cursor {
   display: inline-block;
-  width: 2px;
-  height: 1em;
+  width: 2.5px;
+  height: 1.1em;
   background: var(--primary);
-  vertical-align: text-bottom;
-  margin-left: 3px;
+  vertical-align: -0.15em;
+  margin-left: 4px;
   border-radius: 1px;
-  animation: blink 0.9s step-end infinite;
+  animation: cursorPulse 1.2s ease-in-out infinite;
 }
-@keyframes blink { 50% { opacity: 0; } }
+@keyframes cursorPulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
 
 /* ── Speaking indicator — sleek horizontal bar at the bottom ─── */
 .speakingIndicator {
