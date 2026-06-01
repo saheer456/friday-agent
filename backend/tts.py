@@ -43,14 +43,26 @@ _last_audio_bytes: bytes = b""
 
 
 def clean_for_speech(text: str) -> str:
+    # Strip Mermaid diagram blocks — read as "a diagram"
+    text = re.sub(r"```mermaid[\s\S]*?```", "a diagram", text, flags=re.IGNORECASE)
+    # Strip LaTeX block formulas $$...$$ — read as "an equation"
+    text = re.sub(r"\$\$[\s\S]+?\$\$", "an equation", text)
+    # Strip LaTeX inline formulas $...$ — read as "a formula"
+    text = re.sub(r"\$[^$\n]+?\$", "a formula", text)
+    # Strip chart JSON blocks
+    text = re.sub(r"```chart[\s\S]*?```", "a chart", text, flags=re.IGNORECASE)
+    # Strip generic code blocks
     text = re.sub(r"```[\s\S]*?```", "code block", text)
     text = re.sub(r"`[^`]*`", "", text)
     text = re.sub(r"https?:\S+", "", text)
     text = re.sub(r"[*_]{1,2}", "", text)
     text = re.sub(r"\[(.*?)\]\(.*?\)", r"\1", text)
     text = re.sub(r"[#>]", "", text)
-    text = re.sub(r"\|\s*-+\s*\|", "", text)
-    text = re.sub(r"([!?.])\1+", r"\1", text)
+    # Strip markdown table divider rows  |---|---|
+    text = re.sub(r"(\|\s*-+\s*)+\|?", "", text)
+    # Strip callout markers like [!NOTE] [!WARNING]
+    text = re.sub(r"\[!(NOTE|TIP|WARNING|CAUTION|IMPORTANT)\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"([!?.:])\1+", r"\1", text)
     text = re.sub(r"(\d{3,})", r" \1 ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()

@@ -1,5 +1,5 @@
 import styles from './Header.module.css';
-import { Activity, Database, LogOut, Menu } from 'lucide-react';
+import { Activity, Database, LogOut, Menu, Trash2 } from 'lucide-react';
 
 interface HeaderProps {
   version: string;
@@ -14,66 +14,96 @@ interface HeaderProps {
   fullAccess?: boolean;
 }
 
-export function Header({ version, statusText, isBusy, isSpeaking = false, onClearChat, onToggleTelemetry, onToggleMemories, onLogout, onToggleSidebar, fullAccess = true }: HeaderProps) {
+export function Header({
+  version,
+  statusText,
+  isBusy,
+  isSpeaking = false,
+  onClearChat,
+  onToggleTelemetry,
+  onToggleMemories,
+  onLogout,
+  onToggleSidebar,
+  fullAccess = true,
+}: HeaderProps) {
   return (
     <header className={styles.header}>
-      {onToggleSidebar && (
+
+      {/* ── Left: sidebar toggle ─── */}
+      <div className={styles.left}>
+        {onToggleSidebar && (
+          <button
+            type="button"
+            className={styles.iconBtn}
+            onClick={onToggleSidebar}
+            aria-label="Toggle chat history"
+            title="Toggle chat history"
+          >
+            <Menu size={18} />
+          </button>
+        )}
+      </div>
+
+      {/* ── Center: brand ─── */}
+      <div className={styles.brand}>
+        <span
+          className={[
+            styles.speakDot,
+            isSpeaking ? styles.speakDotActive : '',
+            isBusy && !isSpeaking ? styles.speakDotBusy : '',
+          ].join(' ')}
+          aria-label={isSpeaking ? 'Speaking' : isBusy ? 'Thinking' : ''}
+        />
+        <h1 className={styles.title}>F.R.I.D.A.Y</h1>
+        <span className={styles.versionPill}>{version}</span>
+      </div>
+
+      {/* ── Right: actions ─── */}
+      <div className={styles.actions}>
+        <span className={styles.statusText}>{statusText}</span>
+
         <button
           type="button"
-          className={styles.btnSidebarToggle}
-          onClick={onToggleSidebar}
-          aria-label="Toggle chat history"
-          title="Toggle chat history"
+          className={styles.iconBtn}
+          onClick={onClearChat}
+          aria-label="Clear chat"
+          title="Clear chat"
         >
-          <Menu size={20} />
+          <Trash2 size={16} />
         </button>
-      )}
-      <div className={`${styles.logoRing} ${isSpeaking ? styles.speaking : ''}`}>
-        <div className={styles.logoCore}></div>
-      </div>
-      <div className={styles.titles}>
-        <div className={styles.titleRow}>
-          <h1>F.R.I.D.A.Y</h1>
-          <span className={styles.versionPill}>{version}</span>
-        </div>
-        <p className={styles.tagline}>Full Responsive Interface · Networked Assistant for You</p>
-      </div>
-      <div className={styles.headerActions}>
-        <span className={`${styles.pulseDot} ${isBusy ? styles.busy : ''}`}></span>
-        <span className={styles.statusText}>{statusText}</span>
-        <button type="button" className={styles.btnClear} onClick={onClearChat}>
-          Clear chat
-        </button>
+
         {fullAccess && (
           <button
             type="button"
-            className={styles.btnClear}
+            className={styles.iconBtn}
             onClick={onToggleMemories}
             aria-label="Memory & Knowledge Graph"
             title="Memory & Knowledge Graph"
           >
-            <Database size={18} />
+            <Database size={16} />
           </button>
         )}
-        {/* Mobile: telemetry toggle */}
+
         {fullAccess && (
           <button
             type="button"
-            className={styles.btnTelemetry}
+            className={styles.iconBtn}
             onClick={onToggleTelemetry}
             aria-label="Toggle telemetry"
+            title="Toggle telemetry"
           >
-            <Activity size={18} />
+            <Activity size={16} />
           </button>
         )}
+
         <button
           type="button"
-          className={styles.btnIcon}
+          className={`${styles.iconBtn} ${styles.logoutBtn}`}
           onClick={onLogout}
           aria-label="Log out"
           title="Log out"
         >
-          <LogOut size={18} />
+          <LogOut size={16} />
         </button>
       </div>
     </header>

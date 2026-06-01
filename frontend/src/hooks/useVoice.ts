@@ -8,6 +8,58 @@ declare global {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Strip markdown and special syntax before TTS chunking on the frontend. */
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, '')          // code blocks
+    .replace(/`[^`]*`/g, '')                  // inline code
+    .replace(/\$\$[\s\S]+?\$\$/g, 'an equation')  // LaTeX block
+    .replace(/\$[^$\n]+?\$/g, 'a formula')    // LaTeX inline
+    .replace(/^#{1,6}\s+/gm, '')              // headings
+    .replace(/\*\*([^*]+)\*\*/g, '$1')        // bold
+    .replace(/\*([^*]+)\*/g, '$1')            // italic
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links
+    .replace(/^[-*+]\s+/gm, '')              // unordered list bullets
+    .replace(/^\d+\.\s+/gm, '')             // ordered list bullets
+    .replace(/^>\s*/gm, '')                  // blockquotes
+    .replace(/\|[^\n]*/g, '')               // table rows
+    .replace(/https?:\S+/g, '')              // bare URLs
+    .replace(/\[!(NOTE|TIP|WARNING|CAUTION|IMPORTANT)\]/gi, '')  // callout markers
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Split clean text into chunks at sentence boundaries.
+ * Merges short sentences (< MIN_WORDS) with the next one to avoid
+ * tiny TTS fetches that waste latency.
+ */
+const MIN_WORDS = 8;
+
+function splitIntoChunks(text: string): string[] {
+  // Split on sentence-ending punctuation followed by a space or end of string
+  const raw = text.split(/(?<=[.!?])\s+/);
+  const chunks: string[] = [];
+  let current = '';
+  for (const sentence of raw) {
+    if (!sentence.trim()) continue;
+    current = current ? `${current} ${sentence}` : sentence;
+    if (current.split(' ').length >= MIN_WORDS) {
+      chunks.push(current.trim());
+      current = '';
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.length ? chunks : [text.trim()];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hook
+// ─────────────────────────────────────────────────────────────────────────────
 export function useVoice(
   onSpeechComplete: (text: string) => void,
   onInterim?: (text: string) => void,
@@ -16,26 +68,36 @@ export function useVoice(
   const [sttSupported, setSttSupported] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
 
+  // ── STT refs ─────────────────────────────────────────────────
   const recognitionRef = useRef<any>(null);
-  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const animationFrameIdRef = useRef<number | null>(null);
-  const audioQueueRef = useRef<{ url: string; fallback: string }[]>([]);
-  const speakAbortRef = useRef<AbortController | null>(null);
   const finalTranscriptRef = useRef('');
   const onSpeechCompleteRef = useRef(onSpeechComplete);
   const onInterimRef = useRef(onInterim);
-
   onSpeechCompleteRef.current = onSpeechComplete;
   onInterimRef.current = onInterim;
 
+  // ── TTS state refs ───────────────────────────────────────────
+  /**
+   * Generation counter — incremented on every new queueTTS call.
+   * All async callbacks check this to bail out if they're stale.
+   */
+  const generationRef = useRef(0);
+  const animationFrameIdRef = useRef<number | null>(null);
+  /** Blob URLs to revoke on cleanup */
+  const blobUrlsRef = useRef<string[]>([]);
+  /** Currently playing Audio element */
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+  /** AudioContext — created once and reused */
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  /** Current analyser node (disconnected and replaced each chunk) */
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+
+  // ── STT setup ────────────────────────────────────────────────
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRec) {
-      setSttSupported(false);
-      return;
-    }
+    if (!SpeechRec) { setSttSupported(false); return; }
     setSttSupported(true);
 
     const recognition = new SpeechRec();
@@ -47,159 +109,183 @@ export function useVoice(
       let interim = '';
       let final = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
-        if (e.results[i].isFinal) {
-          final += e.results[i][0].transcript;
-        } else {
-          interim += e.results[i][0].transcript;
-        }
+        if (e.results[i].isFinal) final += e.results[i][0].transcript;
+        else interim += e.results[i][0].transcript;
       }
-      if (final) {
-        finalTranscriptRef.current += final;
-      }
-      if (onInterimRef.current) {
-        onInterimRef.current(finalTranscriptRef.current + interim);
-      }
+      if (final) finalTranscriptRef.current += final;
+      if (onInterimRef.current) onInterimRef.current(finalTranscriptRef.current + interim);
     };
 
     recognition.onend = () => {
       setIsRecording(false);
       const text = finalTranscriptRef.current.trim();
       finalTranscriptRef.current = '';
-      if (text && onSpeechCompleteRef.current) {
-        onSpeechCompleteRef.current(text);
-      }
+      if (text && onSpeechCompleteRef.current) onSpeechCompleteRef.current(text);
     };
 
-    recognition.onerror = () => {
-      setIsRecording(false);
-      finalTranscriptRef.current = '';
-    };
+    recognition.onerror = () => { setIsRecording(false); finalTranscriptRef.current = ''; };
 
     recognitionRef.current = recognition;
-
-    return () => {
-      try { recognition.abort(); } catch {}
-      recognitionRef.current = null;
-    };
+    return () => { try { recognition.abort(); } catch {} recognitionRef.current = null; };
   }, []);
 
+  // ── STT toggle ───────────────────────────────────────────────
   const toggleRecording = useCallback(() => {
     const rec = recognitionRef.current;
-    if (!rec) {
-      console.warn('Speech recognition is not supported in this browser.');
-      return;
-    }
-    if (isRecording) {
-      rec.stop();
-    } else {
-      finalTranscriptRef.current = '';
-      setIsRecording(true);
-      rec.start();
-    }
+    if (!rec) { console.warn('Speech recognition not supported.'); return; }
+    if (isRecording) { rec.stop(); }
+    else { finalTranscriptRef.current = ''; setIsRecording(true); rec.start(); }
   }, [isRecording]);
 
-  const stopAudio = useCallback(() => {
-    if (speakAbortRef.current) {
-      speakAbortRef.current.abort();
-      speakAbortRef.current = null;
-    }
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause();
-      currentAudioRef.current = null;
-    }
+  // ── TTS cleanup helper ───────────────────────────────────────
+  const _cleanupAudio = useCallback(() => {
     if (animationFrameIdRef.current) {
       cancelAnimationFrame(animationFrameIdRef.current);
       animationFrameIdRef.current = null;
     }
     document.documentElement.style.setProperty('--voice-volume', '0');
-    audioQueueRef.current.forEach(({ url }) => URL.revokeObjectURL(url));
-    audioQueueRef.current = [];
-    setIsPlaying(false);
+    try { sourceRef.current?.disconnect(); analyserRef.current?.disconnect(); } catch {}
+    sourceRef.current = null;
+    analyserRef.current = null;
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current = null;
+    }
+    blobUrlsRef.current.forEach(u => URL.revokeObjectURL(u));
+    blobUrlsRef.current = [];
   }, []);
 
-  const queueTTS = useCallback(async (fullText: string) => {
-    const ctrl = new AbortController();
-    speakAbortRef.current = ctrl;
+  // ── stopAudio ─────────────────────────────────────────────────
+  const stopAudio = useCallback(() => {
+    generationRef.current++;       // invalidate all pending callbacks
+    _cleanupAudio();
+    setIsPlaying(false);
+  }, [_cleanupAudio]);
 
+  // ── Fetch a single chunk → blob URL ──────────────────────────
+  const _fetchChunk = useCallback(async (chunk: string, gen: number): Promise<string | null> => {
+    if (generationRef.current !== gen) return null;
     try {
       const r = await authFetch('/api/speak', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: fullText }),
-        signal: ctrl.signal,
+        body: JSON.stringify({ text: chunk }),
       });
+      if (generationRef.current !== gen) return null;
       if (!r.ok) throw new Error(`speak ${r.status}`);
       const blob = await r.blob();
-      if (ctrl.signal.aborted) return;
-
+      if (generationRef.current !== gen) return null;
       const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      currentAudioRef.current = audio;
-      speakAbortRef.current = null;
+      blobUrlsRef.current.push(url);
+      return url;
+    } catch {
+      return null;
+    }
+  }, []);
 
-      // Set up Web Audio API Analyser
+  // ── Play a chunk URL, returns a promise that resolves on 'ended' ──
+  const _playUrl = useCallback(async (url: string, gen: number): Promise<void> => {
+    return new Promise((resolve) => {
+      if (generationRef.current !== gen) { resolve(); return; }
+
+      // Get/create AudioContext (reused)
       if (!audioCtxRef.current) {
         audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
       }
-      const audioContext = audioCtxRef.current;
-      if (audioContext.state === 'suspended') {
-        await audioContext.resume();
-      }
+      const ctx = audioCtxRef.current;
 
-      const source = audioContext.createMediaElementSource(audio);
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
-      analyser.connect(audioContext.destination);
+      // Each chunk gets a FRESH Audio element — avoids createMediaElementSource() throw
+      const audio = new Audio(url);
+      currentAudioRef.current = audio;
 
-      const bufferLength = analyser.frequencyBinCount;
-      const dataArray = new Uint8Array(bufferLength);
-
-      const updateVolume = () => {
-        if (!currentAudioRef.current) return;
-        analyser.getByteFrequencyData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < bufferLength; i++) {
-          sum += dataArray[i];
-        }
-        const average = sum / bufferLength;
-        document.documentElement.style.setProperty('--voice-volume', String(average));
-        animationFrameIdRef.current = requestAnimationFrame(updateVolume);
-      };
-
-      const cleanup = () => {
+      const done = () => {
+        try { sourceRef.current?.disconnect(); analyserRef.current?.disconnect(); } catch {}
+        sourceRef.current = null;
+        analyserRef.current = null;
         if (animationFrameIdRef.current) {
           cancelAnimationFrame(animationFrameIdRef.current);
           animationFrameIdRef.current = null;
         }
         document.documentElement.style.setProperty('--voice-volume', '0');
-        try {
-          source.disconnect();
-          analyser.disconnect();
-        } catch (e) {
-          console.debug('Web Audio API cleanup warning:', e);
-        }
-        URL.revokeObjectURL(url);
-        currentAudioRef.current = null;
-        setIsPlaying(false);
+        resolve();
       };
 
-      audio.onended = cleanup;
-      audio.onerror = cleanup;
+      audio.onended = done;
+      audio.onerror = done;
 
-      setIsPlaying(true);
-      audio.play().then(() => {
-        updateVolume();
-      }).catch((err) => {
-        console.warn('Autoplay blocked or playback error:', err);
-        cleanup();
-      });
-    } catch (err: any) {
-      if (err.name === 'AbortError') return;
-      console.error('[TTS Error]', err);
-      setIsPlaying(false);
-    }
+      const startPlayback = async () => {
+        if (generationRef.current !== gen) { resolve(); return; }
+        if (ctx.state === 'suspended') await ctx.resume();
+
+        try {
+          const source = ctx.createMediaElementSource(audio);
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 256;
+          source.connect(analyser);
+          analyser.connect(ctx.destination);
+          sourceRef.current = source;
+          analyserRef.current = analyser;
+
+          const data = new Uint8Array(analyser.frequencyBinCount);
+          const tick = () => {
+            if (!currentAudioRef.current || generationRef.current !== gen) return;
+            analyser.getByteFrequencyData(data);
+            const avg = data.reduce((a, b) => a + b, 0) / data.length;
+            document.documentElement.style.setProperty('--voice-volume', String(avg));
+            animationFrameIdRef.current = requestAnimationFrame(tick);
+          };
+
+          await audio.play();
+          tick();
+        } catch (err) {
+          console.warn('[TTS] Playback error:', err);
+          resolve();
+        }
+      };
+
+      startPlayback();
+    });
   }, []);
+
+  // ── queueTTS — main entry point ───────────────────────────────
+  const queueTTS = useCallback(async (fullText: string) => {
+    // Invalidate any previous queue
+    stopAudio();
+
+    const gen = ++generationRef.current;
+    const clean = stripMarkdown(fullText);
+    if (!clean) return;
+
+    const chunks = splitIntoChunks(clean);
+    if (!chunks.length) return;
+
+    setIsPlaying(true);
+
+    // Pre-fetch first two chunks in parallel
+    const prefetched: (string | null)[] = new Array(chunks.length).fill(null);
+    prefetched[0] = await _fetchChunk(chunks[0], gen);
+    if (generationRef.current !== gen) { setIsPlaying(false); return; }
+    if (chunks.length > 1) {
+      prefetched[1] = await _fetchChunk(chunks[1], gen);
+    }
+
+    for (let idx = 0; idx < chunks.length; idx++) {
+      if (generationRef.current !== gen) break;
+
+      // Get or await the URL for this chunk
+      const url = prefetched[idx] ?? await _fetchChunk(chunks[idx], gen);
+      if (!url || generationRef.current !== gen) continue;
+
+      // Start fetching idx+2 while we play idx
+      if (idx + 2 < chunks.length) {
+        _fetchChunk(chunks[idx + 2], gen).then(u => { prefetched[idx + 2] = u; });
+      }
+
+      await _playUrl(url, gen);
+    }
+
+    if (generationRef.current === gen) setIsPlaying(false);
+  }, [stopAudio, _fetchChunk, _playUrl]);
 
   return {
     isRecording,

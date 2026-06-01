@@ -250,7 +250,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Content-Type", "Authorization"],
 )
 
@@ -1062,6 +1062,37 @@ async def speak_endpoint(body: TTSBody, _auth: dict = Depends(verify_auth)):
     media_type = "audio/mpeg" if suffix == ".mp3" else "audio/wav"
     return RawResponse(content=audio, media_type=media_type)
 
+
+
+class ExecuteBody(BaseModel):
+    code: str = Field(..., min_length=1, max_length=20_000)
+    language: str = Field(default="python", max_length=20)
+    timeout: int = Field(default=15, ge=1, le=60)
+
+
+@app.post("/api/execute")
+@limiter.limit("10/minute")
+async def execute_code(request: Request, body: ExecuteBody, _auth: dict = Depends(verify_auth)):
+    """Execute Python code in a sandboxed subprocess via CodeSkill.
+    Uses the same isolated execution environment as the backend skill —
+    no raw subprocess calls, timeout enforced, stdout/stderr capped.
+    """
+    if body.language.lower() not in {"python", "py"}:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Only Python execution is supported. Got: {body.language}"
+        )
+
+    from backend.skills.code_skill import CodeSkill
+    skill = CodeSkill()
+    result = skill.execute_python(body.code, timeout=body.timeout)
+
+    return {
+        "stdout":    result.data.get("stdout", "") if result.data else "",
+        "stderr":    result.data.get("stderr", "") if result.data else result.message,
+        "exit_code": result.data.get("exit_code", -1) if result.data else -1,
+        "status":    result.status,
+    }
 
 
 @app.post("/api/chat")

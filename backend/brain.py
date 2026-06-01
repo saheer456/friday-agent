@@ -194,11 +194,19 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
             )
         else:
             system_content += (
-                "\n\nOUTPUT CHANNEL: WEB CHAT. Format with Markdown. "
-                "Write bullet points as complete sentences. "
-                "NEVER output raw URLs. "
-                "Never use the '**Term**: description' pattern. "
+                "\n\nOUTPUT CHANNEL: WEB CHAT. Format responses with rich Markdown:\n"
+                "- Use **markdown tables** for any comparison, schedule, feature matrix, or structured data.\n"
+                "- Use GFM callouts for emphasis: `> [!NOTE]`, `> [!TIP]`, `> [!WARNING]`, `> [!CAUTION]`, `> [!IMPORTANT]`.\n"
+                "- Use **mermaid** fenced code blocks (```mermaid) for flowcharts, sequence diagrams, or architecture.\n"
+                "- Use **chart** fenced code blocks (```chart) for data visualization. Format as JSON:\n"
+                "  {\"type\":\"bar\",\"title\":\"...\",\"labels\":[...],\"datasets\":[{\"label\":\"...\",\"data\":[...]}]}\n"
+                "  Supported types: bar, line, pie, scatter.\n"
+                "- Use `> [!NOTE]` style callouts, NOT plain blockquotes, for notes and warnings.\n"
+                "- Use syntax-highlighted code blocks with the language name (```python, ```js, etc.).\n"
+                "- Use ordered/unordered lists and headers freely.\n"
+                "- NEVER output raw URLs. NEVER use the '**Term**: description' pattern.\n"
             )
+
         if passive_context:
             system_content += f"\n\nCONTEXT:\n{passive_context}"
 

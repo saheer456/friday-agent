@@ -18,6 +18,24 @@
   --shadow:      0 4px 20px rgba(46, 50, 48, 0.06);
   --shadow-md:   0 8px 32px rgba(46, 50, 48, 0.10);
 
+  /* Code block — warm dark, harmonized with Terra */
+  --code-bg:     #2a2520;  /* Warm charcoal, not cold blue */
+  --code-border: rgba(112, 92, 48, 0.25);
+  --code-text:   #e8dfd0;  /* Warm off-white */
+  --code-header: #1e1a16;  /* Darker header strip */
+
+  /* Callout palette */
+  --callout-note:      rgba(74, 124, 89, 0.12);
+  --callout-note-border: #4a7c59;
+  --callout-tip:       rgba(59, 130, 246, 0.1);
+  --callout-tip-border: #3b82f6;
+  --callout-warn:      rgba(245, 158, 11, 0.12);
+  --callout-warn-border: #f59e0b;
+  --callout-caution:   rgba(239, 68, 68, 0.1);
+  --callout-caution-border: #ef4444;
+  --callout-important: rgba(139, 92, 246, 0.1);
+  --callout-important-border: #8b5cf6;
+
   /* Shape */
   --radius:      12px;
   --radius-sm:   8px;
