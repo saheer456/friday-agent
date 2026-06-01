@@ -26,8 +26,13 @@ os.chdir(ROOT)
 
 from dotenv import load_dotenv
 
-load_dotenv(ROOT / ".env", override=True)
-load_dotenv(ROOT / "friday-agent.env", override=True)
+_IS_DEPLOYED = any(
+    os.getenv(var)
+    for var in ("RENDER", "KUBERNETES_SERVICE_HOST", "GAE_ENV", "DEPLOYED", "PRODUCTION")
+)
+_DOTENV_OVERRIDE = not _IS_DEPLOYED
+load_dotenv(ROOT / ".env", override=_DOTENV_OVERRIDE)
+load_dotenv(ROOT / "friday-agent.env", override=_DOTENV_OVERRIDE)
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Security, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -152,9 +157,9 @@ async def verify_auth(request: Request, credentials: HTTPAuthorizationCredential
 
 
 def _ui_info() -> dict:
-    version = (os.getenv("FRIDAY_UI_VERSION") or "v4.0 Nexus").strip()
+    version = (os.getenv("FRIDAY_UI_VERSION") or "v4.1 Nexus").strip()
     if not version:
-        version = "v4.0 Nexus"
+        version = "v4.1 Nexus"
     return {"version": version}
 
 
@@ -1100,7 +1105,11 @@ async def chat_once(body: ChatBody, _auth: dict = Depends(verify_auth)):
     """Non-streaming fallback (full reply as JSON)."""
     parts: list[str] = []
     try:
-        async for chunk in brain.stream_response(body.message.strip(), voice_mode=body.voice_mode):
+        async for chunk in brain.stream_response(
+            body.message.strip(),
+            session_id=body.session_id,
+            voice_mode=body.voice_mode,
+        ):
             parts.append(chunk)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e

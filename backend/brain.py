@@ -118,6 +118,14 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
     if not session_id:
         session_id = "default-session"
 
+    logger.debug(
+        "[Turn] start session=%s voice_mode=%s emit_phases=%s user_chars=%d",
+        session_id,
+        voice_mode,
+        emit_phases,
+        len(user_message or ""),
+    )
+
     if emit_phases:
         await event_bus.emit("thinking_started", {"message": user_message})
         yield (
@@ -148,6 +156,7 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
         except Exception as e:
             logger.error(f"Context retrieval error: {e}")
             passive_context = ""
+        logger.debug("[Turn] context_chars=%d session=%s", len(passive_context or ""), session_id)
 
         # Load from DB if in-memory history is empty
         async with _history_lock:
@@ -156,6 +165,11 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
                 try:
                     db_history = await chat_history.get_latest_chat_messages(session_id, limit=16)
                     conversation_histories[session_id].extend(db_history)
+                    logger.debug(
+                        "[Turn] loaded_db_history session=%s messages=%d",
+                        session_id,
+                        len(db_history),
+                    )
                 except Exception as e:
                     logger.error(f"Error loading chat history from DB: {e}")
 
@@ -324,6 +338,15 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
                     },
                 )
 
+            logger.debug(
+                "[Turn] provider_round=%d session=%s messages=%d tools=%d skip_tool_loop=%s",
+                round_num + 1,
+                session_id,
+                len(messages),
+                len(tools_payload),
+                skip_tool_loop,
+            )
+
             try:
                 async for event in provider_manager.stream(
                     messages, tools=tools_payload,
@@ -353,6 +376,13 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
                         if "arguments" in delta_fn:
                             tool_calls_accumulator[idx]["function"]["arguments"] += delta_fn["arguments"]
                     elif event.get("type") == "done":
+                        logger.debug(
+                            "[Turn] provider_done session=%s finish_reason=%s text_chars=%d tool_calls=%d",
+                            session_id,
+                            event.get("finish_reason"),
+                            len(full_response),
+                            len(tool_calls_accumulator),
+                        )
                         break
             except Exception as e:
                 last_error = f"[Error: {e}]"
@@ -369,6 +399,12 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
 
             if tool_calls_accumulator:
                 tool_calls = list(tool_calls_accumulator.values())
+                logger.debug(
+                    "[Turn] tool_calls_detected session=%s count=%d names=%s",
+                    session_id,
+                    len(tool_calls),
+                    [tc["function"]["name"] for tc in tool_calls],
+                )
                 assistant_msg = {
                     "role": "assistant",
                     "content": full_response or None,
@@ -433,12 +469,25 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
 
                     t0 = time.monotonic()
                     res_str = ""
+                    logger.debug(
+                        "[Turn] tool_start session=%s tool=%s args_chars=%d",
+                        session_id,
+                        fn_name,
+                        len(fn_args or ""),
+                    )
                     async for event_type, val in _run_tool_with_progress(fn_name, fn_args, emit_phases):
                         if event_type == "phase":
                             yield (event_type, val)
                         elif event_type == "result":
                             res_str = val
                     duration = (time.monotonic() - t0) * 1000
+                    logger.debug(
+                        "[Turn] tool_finish session=%s tool=%s duration_ms=%.1f result_chars=%d",
+                        session_id,
+                        fn_name,
+                        duration,
+                        len(res_str or ""),
+                    )
 
                     is_failure = res_str.startswith("[Error:") or '"status": "failed"' in res_str
                     tool_memory.record_result(
@@ -490,6 +539,7 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
             yield ("text", "I'm sorry, I used too many tools.")
     finally:
         session_history[:] = session_history[-MAX_HISTORY:]
+        logger.debug("[Turn] end session=%s retained_history=%d", session_id, len(session_history))
 
 
 async def iter_chat_sse_events(user_message: str, session_id: str = "default-session", voice_mode: bool = False):

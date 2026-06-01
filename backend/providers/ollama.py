@@ -82,7 +82,8 @@ class OllamaProvider(BaseProvider):
                     continue
                 raw = line[6:]
                 if raw.strip() == "[DONE]":
-                    break
+                    yield {"type": "done", "finish_reason": "stop"}
+                    return
                 try:
                     obj = json.loads(raw)
                     if "error" in obj:

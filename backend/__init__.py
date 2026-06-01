@@ -3,15 +3,18 @@ backend/__init__.py
 FRIDAY backend package — modular AI agent platform.
 """
 import logging
+import os
 import sys
 from pathlib import Path
 
 log_file = Path(__file__).resolve().parent.parent / "logs" / "friday.log"
 log_file.parent.mkdir(parents=True, exist_ok=True)
+log_level_name = os.getenv("FRIDAY_LOG_LEVEL", "INFO").strip().upper()
+log_level = getattr(logging, log_level_name, logging.INFO)
 
 logging.basicConfig(
     filename=str(log_file),
-    level=logging.INFO,
+    level=log_level,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 

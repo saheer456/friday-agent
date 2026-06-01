@@ -400,7 +400,7 @@ async function loadSystem() {
 
     // Version pill
     const ui = d.ui || {};
-    if (versionTag) versionTag.textContent = ui.version || "v4.0 Nexus";
+    if (versionTag) versionTag.textContent = ui.version || "v4.1 Nexus";
 
     // Readiness badges
     const rd = d.readiness || {};
@@ -427,7 +427,7 @@ async function loadSystem() {
       ["Turns", String(d.history_turns ?? 0)],
     ]);
   } catch {
-    if (versionTag) versionTag.textContent = "v4.0 Nexus";
+    if (versionTag) versionTag.textContent = "v4.1 Nexus";
     voiceStack.innerHTML = "<p class='ph-detail'>Could not load stack info.</p>";
   }
 }
