@@ -7,7 +7,7 @@ import httpx
 from .base import BaseProvider, ProviderConfig, ProviderResponse, ProviderStatus
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "meta-llama/llama-3.1-8b-instruct:free"
+DEFAULT_MODEL = "openrouter/owl-alpha"
 
 
 class OpenRouterProvider(BaseProvider):
