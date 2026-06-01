@@ -400,7 +400,7 @@ async function loadSystem() {
 
     // Version pill
     const ui = d.ui || {};
-    if (versionTag) versionTag.textContent = ui.version || "v2.6 Sentinel";
+    if (versionTag) versionTag.textContent = ui.version || "v3.0 Vanguard";
 
     // Readiness badges
     const rd = d.readiness || {};
@@ -427,7 +427,7 @@ async function loadSystem() {
       ["Turns", String(d.history_turns ?? 0)],
     ]);
   } catch {
-    if (versionTag) versionTag.textContent = "v2.6 Sentinel";
+    if (versionTag) versionTag.textContent = "v3.0 Vanguard";
     voiceStack.innerHTML = "<p class='ph-detail'>Could not load stack info.</p>";
   }
 }

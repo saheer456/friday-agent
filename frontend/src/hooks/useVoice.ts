@@ -92,6 +92,10 @@ export function useVoice(
   /** Current analyser node (disconnected and replaced each chunk) */
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  
+  /** Queue of pending TTS text chunks and their prefetch promises */
+  const queueRef = useRef<{ text: string; urlPromise: Promise<string | null> }[]>([]);
+  const isProcessingRef = useRef(false);
 
   // ── STT setup ────────────────────────────────────────────────
   useEffect(() => {
@@ -160,6 +164,8 @@ export function useVoice(
     generationRef.current++;       // invalidate all pending callbacks
     _cleanupAudio();
     setIsPlaying(false);
+    queueRef.current = [];
+    isProcessingRef.current = false;
   }, [_cleanupAudio]);
 
   // ── Fetch a single chunk → blob URL ──────────────────────────
@@ -247,45 +253,57 @@ export function useVoice(
     });
   }, []);
 
+  // ── Playback loop ─────────────────────────────────────────────
+  const _runPlaybackLoop = useCallback(async (gen: number) => {
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
+    setIsPlaying(true);
+
+    try {
+      while (generationRef.current === gen) {
+        if (queueRef.current.length > 0) {
+          const item = queueRef.current.shift()!;
+          const url = await item.urlPromise;
+          if (url && generationRef.current === gen) {
+            await _playUrl(url, gen);
+          }
+        } else {
+          setIsPlaying(false);
+          break;
+        }
+      }
+    } finally {
+      isProcessingRef.current = false;
+    }
+  }, [_playUrl]);
+
   // ── queueTTS — main entry point ───────────────────────────────
   const queueTTS = useCallback(async (fullText: string) => {
-    // Invalidate any previous queue
-    stopAudio();
-
-    const gen = ++generationRef.current;
     const clean = stripMarkdown(fullText);
     if (!clean) return;
 
     const chunks = splitIntoChunks(clean);
     if (!chunks.length) return;
 
-    setIsPlaying(true);
-
-    // Pre-fetch first two chunks in parallel
-    const prefetched: (string | null)[] = new Array(chunks.length).fill(null);
-    prefetched[0] = await _fetchChunk(chunks[0], gen);
-    if (generationRef.current !== gen) { setIsPlaying(false); return; }
-    if (chunks.length > 1) {
-      prefetched[1] = await _fetchChunk(chunks[1], gen);
+    // If starting fresh, increment generation to cancel any background stale tasks
+    if (!isProcessingRef.current && queueRef.current.length === 0) {
+      generationRef.current++;
     }
+    const gen = generationRef.current;
 
-    for (let idx = 0; idx < chunks.length; idx++) {
-      if (generationRef.current !== gen) break;
+    // Create queue items and start prefetching immediately
+    const items = chunks.map(chunk => ({
+      text: chunk,
+      urlPromise: _fetchChunk(chunk, gen)
+    }));
 
-      // Get or await the URL for this chunk
-      const url = prefetched[idx] ?? await _fetchChunk(chunks[idx], gen);
-      if (!url || generationRef.current !== gen) continue;
+    queueRef.current.push(...items);
 
-      // Start fetching idx+2 while we play idx
-      if (idx + 2 < chunks.length) {
-        _fetchChunk(chunks[idx + 2], gen).then(u => { prefetched[idx + 2] = u; });
-      }
-
-      await _playUrl(url, gen);
+    // Run playback loop
+    if (!isProcessingRef.current) {
+      _runPlaybackLoop(gen);
     }
-
-    if (generationRef.current === gen) setIsPlaying(false);
-  }, [stopAudio, _fetchChunk, _playUrl]);
+  }, [_fetchChunk, _runPlaybackLoop]);
 
   return {
     isRecording,

@@ -317,6 +317,7 @@ export function useChat(
         let fullText  = '';
         let sawToken  = false;
         let streamDone = false;
+        let ttsSentence = '';  // accumulates until sentence boundary
 
         // Plan steps collector
         let planSteps: { title: string; detail: string; done: boolean }[] = [];
@@ -353,8 +354,16 @@ export function useChat(
                 );
               }
               if (finalText.trim()) {
-                if (limitedMode) saveLocalMemory(text, finalText);
-                else queueTTS(finalText);
+                if (limitedMode) {
+                  saveLocalMemory(text, finalText);
+                } else if (isVoiceMode) {
+                  // In voice mode: send any leftover sentence buffer not yet spoken
+                  const leftover = ttsSentence.trim();
+                  if (leftover) queueTTS(leftover);
+                } else {
+                  // Non-voice mode: send the full response to TTS
+                  queueTTS(finalText);
+                }
               }
               break outer;
             }
@@ -424,9 +433,20 @@ export function useChat(
                 }]);
               }
               fullText += chunk;
+              ttsSentence += chunk;
               setMessages(prev =>
                 prev.map(m => m.id === aiMsgId ? { ...m, content: m.content + chunk } : m)
               );
+
+              // Streaming TTS: fire at sentence boundary (voice mode only)
+              if (!limitedMode && isVoiceMode) {
+                const sentBoundary = ttsSentence.match(/^([\s\S]+?[.!?])(\s|$)/);
+                if (sentBoundary && ttsSentence.length >= 40) {
+                  const sentenceToSpeak = sentBoundary[1].trim();
+                  ttsSentence = ttsSentence.slice(sentBoundary[0].length);
+                  queueTTS(sentenceToSpeak);
+                }
+              }
             }
           }
         }

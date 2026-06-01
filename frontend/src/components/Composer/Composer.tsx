@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { Mic, Paperclip, Send } from 'lucide-react';
+import { Paperclip, Send } from 'lucide-react';
 import styles from './Composer.module.css';
 
 interface ComposerProps {
@@ -16,6 +16,17 @@ interface ComposerProps {
   activeSessionFiles?: string[];
   onRemoveFile?: (filename: string) => void;
   sttSupported?: boolean;
+}
+
+/** Animated floating voice button with three dot bars (waveform style) */
+function VoiceDots({ active }: { active: boolean }) {
+  return (
+    <span className={`${styles.voiceDots} ${active ? styles.voiceDotsActive : ''}`} aria-hidden>
+      <span className={styles.vd} />
+      <span className={styles.vd} />
+      <span className={styles.vd} />
+    </span>
+  );
 }
 
 export function Composer({ value, onChange, onSend, isBusy, isRecording, onToggleRecord, onUpload, uploadState, interimText, allowUpload = true, activeSessionFiles = [], onRemoveFile, sttSupported = true }: ComposerProps) {
@@ -126,14 +137,20 @@ export function Composer({ value, onChange, onSend, isBusy, isRecording, onToggl
           onKeyDown={handleKeyDown}
         />
 
-        <button 
-          type="button" 
-          className={`${styles.btn} ${styles.voice} ${isRecording ? styles.recording : ''} ${!sttSupported ? styles.unsupported : ''}`}
+        {/* Floating animated voice button */}
+        <button
+          type="button"
+          className={[
+            styles.voiceBtn,
+            isRecording ? styles.voiceBtnActive : '',
+            !sttSupported ? styles.unsupported : '',
+          ].join(' ')}
           onClick={sttSupported ? onToggleRecord : undefined}
-          title={sttSupported ? "Voice input" : "Speech-to-text not supported in this browser"}
+          title={sttSupported ? (isRecording ? 'Stop recording' : 'Voice input') : 'Speech-to-text not supported'}
           disabled={!sttSupported}
+          aria-label={isRecording ? 'Stop recording' : 'Start voice input'}
         >
-          <Mic size={20} />
+          <VoiceDots active={isRecording} />
         </button>
 
         <button 

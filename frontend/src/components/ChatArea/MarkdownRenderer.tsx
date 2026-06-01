@@ -404,7 +404,7 @@ function parseBlocks(text: string, mermaidCounter: { n: number }): React.ReactNo
             <table className={mdStyles.table}>
               <thead><tr>{headers.map((h, hi) => <th key={hi} className={mdStyles.th}>{renderInline(h)}</th>)}</tr></thead>
               <tbody>{rows.map((row, ri) => (
-                <tr key={ri} className={ri % 2 === 1 ? mdStyles.trAlt : ''}>
+                <tr key={ri} className={ri % 2 === 0 ? mdStyles.trOdd : mdStyles.trEven}>
                   {row.map((cell, ci) => <td key={ci} className={mdStyles.td}>{renderInline(cell)}</td>)}
                 </tr>
               ))}</tbody>
@@ -499,6 +499,11 @@ interface MarkdownRendererProps { content: string; isStreaming?: boolean; }
 export function MarkdownRenderer({ content, isStreaming }: MarkdownRendererProps) {
   const mermaidCounter = { n: 0 };
   const blocks = parseBlocks(content, mermaidCounter);
+
+  // If streaming with no content yet — show a standalone blinking cursor
+  if (isStreaming && blocks.length === 0) {
+    return <div className={mdStyles.root}>{'\u200B'}<span className={styles.cursor} /></div>;
+  }
 
   if (isStreaming && blocks.length > 0) {
     const last = blocks.length - 1;
