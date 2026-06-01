@@ -90,6 +90,14 @@ class ProviderManager:
             preferred or "<auto>",
         )
 
+        # Always ensure groq is first in fallback order (primary free-tier provider)
+        if not preferred and "groq" in self._providers:
+            order = ["groq"]
+            for p in self._fallback_order:
+                if p not in order:
+                    order.append(p)
+            self._fallback_order = order
+
     def _check_rate_limit(self, provider_name: str) -> bool:
         last_call = self._rate_limiters.get(provider_name, 0.0)
         now = time.monotonic()
@@ -146,10 +154,17 @@ class ProviderManager:
                     )
                     return result
                 except Exception as e:
-                    err_msg = f"{provider_name}: {e}"
+                    err_str = str(e)
+                    err_msg = f"{provider_name}({provider.config.model}): {e}"
                     logger.warning(f"[ProviderManager] {provider_name} attempt {attempt + 1} failed: {e}")
 
-                    if "429" in str(e) or "rate" in str(e).lower():
+                    # 404 = model not found / bad endpoint — no point retrying
+                    if "404" in err_str:
+                        provider.status = ProviderStatus.UNHEALTHY
+                        errors.append(err_msg + " [model/endpoint not found — check model name]")
+                        break
+
+                    if "429" in err_str or "rate" in err_str.lower():
                         provider.status = ProviderStatus.RATE_LIMITED
                         self._rate_limited_until[provider_name] = time.monotonic() + 60.0
                         wait = 2 ** (attempt + 1)
@@ -208,11 +223,12 @@ class ProviderManager:
                     tool_chunks = 0
                     async for event in provider.stream(messages, tools=tools, **kwargs):
                         if event.get("type") == "error":
-                            errors.append(f"{provider_name}: {event['error']}")
+                            err_detail = event['error']
+                            errors.append(f"{provider_name}({provider.config.model}): {err_detail}")
                             logger.debug(
                                 "[ProviderManager] Stream provider=%s returned error event: %s",
                                 provider_name,
-                                event["error"],
+                                err_detail,
                             )
                             break
                         if event.get("type") == "text":
@@ -234,14 +250,21 @@ class ProviderManager:
                         if attempt < provider.config.max_retries - 1:
                             await asyncio.sleep(2 ** attempt)
                             continue
-                        errors.append(f"{provider_name}: stream finished without done event")
+                        errors.append(f"{provider_name}({provider.config.model}): stream finished without done event")
                         break
                     break
                 except Exception as e:
-                    err_msg = f"{provider_name}: {e}"
+                    err_str = str(e)
+                    err_msg = f"{provider_name}({provider.config.model}): {e}"
                     logger.warning(f"[ProviderManager] {provider_name} stream attempt {attempt + 1} failed: {e}")
 
-                    if "429" in str(e) or "rate" in str(e).lower():
+                    # 404 = model not found / bad endpoint — no point retrying
+                    if "404" in err_str:
+                        provider.status = ProviderStatus.UNHEALTHY
+                        errors.append(err_msg + " [model/endpoint not found — check model name]")
+                        break
+
+                    if "429" in err_str or "rate" in err_str.lower():
                         provider.status = ProviderStatus.RATE_LIMITED
                         self._rate_limited_until[provider_name] = time.monotonic() + 60.0
                         wait = 2 ** (attempt + 1)

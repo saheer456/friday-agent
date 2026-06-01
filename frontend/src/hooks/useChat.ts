@@ -34,17 +34,20 @@ export function useChat(
     setMessages(prev => [...prev, { id: Date.now().toString(), role: 'assistant', content: text, streaming: false, timestamp: timeStr }]);
   }, []);
 
-  const fetchSessions = useCallback(async () => {
-    if (limitedMode) return;
+  const fetchSessions = useCallback(async (): Promise<{ id: string; title: string; created_at?: string }[]> => {
+    if (limitedMode) return [];
     try {
       const res = await authFetch('/api/sessions');
       if (res.ok) {
         const data = await res.json();
-        setSessions(data.sessions || []);
+        const list = data.sessions || [];
+        setSessions(list);
+        return list;
       }
     } catch (e) {
       console.error('Error fetching sessions:', e);
     }
+    return [];
   }, [limitedMode]);
 
   const selectSession = useCallback(async (sessionId: string) => {
@@ -249,11 +252,18 @@ export function useChat(
     }
   }, [limitedMode, activeSessionId, onStatusChange]);
 
-  // On mount: create a fresh session (never reuse default-session)
+  // On mount: restore the most recent session, or create one if none exist.
+  // Bug fix: previously always called createSession() which discarded all history on every page load.
   useEffect(() => {
     if (!limitedMode) {
-      fetchSessions().then(() => {
-        createSession();
+      fetchSessions().then((existingSessions) => {
+        if (existingSessions.length > 0) {
+          // Restore the most recent session (first in DESC-ordered list)
+          selectSession(existingSessions[0].id);
+        } else {
+          // No sessions at all — create the first one
+          createSession();
+        }
       });
     }
   }, [limitedMode]); // eslint-disable-line react-hooks/exhaustive-deps
