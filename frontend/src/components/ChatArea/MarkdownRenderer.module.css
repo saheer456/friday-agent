@@ -129,9 +129,9 @@
   margin: 1em 0;
   border-radius: var(--radius-sm);
   border: 1px solid var(--outline);
-  border-left: 3px solid var(--primary);
-  border-right: 3px solid var(--amber);
-  box-shadow: var(--shadow);
+  border-left: 3px solid #00d2ff;
+  border-right: 3px solid #a78bfa;
+  box-shadow: 0 0 12px rgba(0, 210, 255, 0.08), var(--shadow);
 }
 .table {
   border-collapse: collapse;

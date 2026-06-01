@@ -152,9 +152,9 @@ async def verify_auth(request: Request, credentials: HTTPAuthorizationCredential
 
 
 def _ui_info() -> dict:
-    version = (os.getenv("FRIDAY_UI_VERSION") or "v3.0 Vanguard").strip()
+    version = (os.getenv("FRIDAY_UI_VERSION") or "v4.0 Nexus").strip()
     if not version:
-        version = "v3.0 Vanguard"
+        version = "v4.0 Nexus"
     return {"version": version}
 
 

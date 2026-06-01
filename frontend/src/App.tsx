@@ -256,7 +256,7 @@ function App() {
       />
       <div className={styles.mainCol}>
         <Header
-          version={system?.ui?.version || 'v3.0 Vanguard'}
+          version={system?.ui?.version || 'v4.0 Nexus'}
           statusText={statusText}
           isBusy={chatBusy}
           isSpeaking={isPlaying}

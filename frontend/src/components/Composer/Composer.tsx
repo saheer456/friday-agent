@@ -129,6 +129,7 @@ export function Composer({ value, onChange, onSend, isBusy, isRecording, onToggl
           value={value}
           placeholder={isRecording && interimText ? interimText : "Message FRIDAY…"}
           maxLength={16000}
+          autoFocus
           title="Enter to send · Shift+Enter for newline"
           onChange={(e) => {
             onChange(e.target.value);

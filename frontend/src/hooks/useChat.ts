@@ -356,13 +356,10 @@ export function useChat(
               if (finalText.trim()) {
                 if (limitedMode) {
                   saveLocalMemory(text, finalText);
-                } else if (isVoiceMode) {
-                  // In voice mode: send any leftover sentence buffer not yet spoken
+                } else {
+                  // Send any leftover sentence buffer not yet spoken
                   const leftover = ttsSentence.trim();
                   if (leftover) queueTTS(leftover);
-                } else {
-                  // Non-voice mode: send the full response to TTS
-                  queueTTS(finalText);
                 }
               }
               break outer;
@@ -438,10 +435,10 @@ export function useChat(
                 prev.map(m => m.id === aiMsgId ? { ...m, content: m.content + chunk } : m)
               );
 
-              // Streaming TTS: fire at sentence boundary (voice mode only)
-              if (!limitedMode && isVoiceMode) {
-                const sentBoundary = ttsSentence.match(/^([\s\S]+?[.!?])(\s|$)/);
-                if (sentBoundary && ttsSentence.length >= 40) {
+              // Streaming TTS: fire at sentence boundary
+              if (!limitedMode) {
+                const sentBoundary = ttsSentence.match(/^([\s\S]+?[.!?\n])(\s|$)/);
+                if (sentBoundary && ttsSentence.length >= 20) {
                   const sentenceToSpeak = sentBoundary[1].trim();
                   ttsSentence = ttsSentence.slice(sentBoundary[0].length);
                   queueTTS(sentenceToSpeak);

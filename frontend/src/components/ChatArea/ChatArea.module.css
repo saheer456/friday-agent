@@ -177,64 +177,7 @@
   50% { opacity: 1; }
 }
 
-/* ── Speaking indicator — sleek horizontal bar at the bottom ─── */
-.speakingIndicator {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  padding: 10px 24px;
-  background: var(--bg1);
-  border-top: 1px solid var(--outline);
-  border-bottom: 1px solid var(--outline);
-  backdrop-filter: blur(10px);
-  animation: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-  flex-shrink: 0;
-}
 
-@keyframes slide-up {
-  from { transform: translateY(100%); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
-}
-
-.speakingCircle {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  border: 2px solid var(--primary-border);
-  background: var(--primary-dim);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 0 10px rgba(74, 124, 89, 0.15);
-  transform: scale(calc(1 + var(--voice-volume, 0) * 0.008));
-  transition: transform 0.05s ease-out;
-  animation: core-glow 2s infinite alternate;
-}
-
-.speakingCircleInner {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--primary);
-  box-shadow: 0 0 8px rgba(74, 124, 89, 0.3);
-  transform: scale(calc(0.9 + var(--voice-volume, 0) * 0.015));
-  transition: transform 0.05s ease-out;
-}
-
-.speakingText {
-  font-family: var(--font-head);
-  font-size: 0.9rem;
-  font-style: italic;
-  font-weight: 600;
-  color: var(--primary);
-  letter-spacing: 0.5px;
-}
-
-@keyframes core-glow {
-  0% { box-shadow: 0 0 8px rgba(74, 124, 89, 0.15); border-color: var(--primary-border); }
-  100% { box-shadow: 0 0 16px rgba(74, 124, 89, 0.45); border-color: var(--primary); }
-}
 
 .msgHeader {
   display: flex;

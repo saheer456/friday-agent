@@ -4,6 +4,7 @@ import type { Message } from '../../types/api';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { PlanCard } from './PlanCard';
 import { GreetingSuggestions } from './GreetingSuggestions';
+import { VoiceVisualizer } from './VoiceVisualizer';
 import styles from './ChatArea.module.css';
 
 interface ChatAreaProps {
@@ -122,14 +123,7 @@ export function ChatArea({ messages, isSpeaking, onDropFile, onSelectSuggestion 
         )}
       </div>
 
-      {isSpeaking && (
-        <div className={styles.speakingIndicator}>
-          <div className={styles.speakingCircle}>
-            <div className={styles.speakingCircleInner}></div>
-          </div>
-          <span className={styles.speakingText}>FRIDAY is speaking...</span>
-        </div>
-      )}
+      <VoiceVisualizer isSpeaking={isSpeaking} />
     </div>
   );
 }
