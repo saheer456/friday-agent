@@ -102,7 +102,11 @@ class OllamaProvider(BaseProvider):
     async def health_check(self) -> bool:
         try:
             client = self._get_client()
-            r = await client.get("http://localhost:11434/api/tags", timeout=5.0)
+            from urllib.parse import urlparse
+            parsed = urlparse(self.config.base_url)
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+            tags_url = f"{origin}/api/tags"
+            r = await client.get(tags_url, timeout=5.0)
             self.status = ProviderStatus.HEALTHY if r.is_success else ProviderStatus.UNHEALTHY
             return r.is_success
         except Exception:

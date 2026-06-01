@@ -49,8 +49,13 @@ class ProviderManager:
         if self.is_key_usable(or_key) and "openrouter" not in self._providers:
             self.register("openrouter", OpenRouterProvider())
 
+        ollama_url = (os.getenv("OLLAMA_URL") or "http://localhost:11434/v1/chat/completions").strip()
+        is_deployed = any(os.getenv(var) for var in ["RENDER", "PORT", "KUBERNETES_SERVICE_HOST", "GAE_ENV", "DEPLOYED", "PRODUCTION"])
+        is_ollama_local = "localhost" in ollama_url or "127.0.0.1" in ollama_url
+
         if "ollama" not in self._providers:
-            self.register("ollama", OllamaProvider())
+            if not is_deployed or not is_ollama_local:
+                self.register("ollama", OllamaProvider())
 
         preferred = os.getenv("FRIDAY_LLM_PROVIDER", "").strip().lower()
         if preferred:
@@ -80,7 +85,7 @@ class ProviderManager:
 
         order = list(self._fallback_order)
 
-        last_error = ""
+        errors = []
         for provider_name in order:
             provider = self._providers.get(provider_name)
             if not provider:
@@ -101,7 +106,7 @@ class ProviderManager:
                     provider.status = ProviderStatus.HEALTHY
                     return result
                 except Exception as e:
-                    last_error = f"{provider_name}: {e}"
+                    err_msg = f"{provider_name}: {e}"
                     logger.warning(f"[ProviderManager] {provider_name} attempt {attempt + 1} failed: {e}")
 
                     if "429" in str(e) or "rate" in str(e).lower():
@@ -115,9 +120,12 @@ class ProviderManager:
                         wait = 2 ** attempt
                         await asyncio.sleep(wait)
                         continue
+                    errors.append(err_msg)
                     break
 
-        raise RuntimeError(f"All providers failed. Last error: {last_error}")
+        if not errors:
+            raise RuntimeError("No usable LLM providers registered. Please check that you configured GROQ_API_KEY, CEREBRAS_API_KEY, or OPENROUTER_API_KEY in your environment.")
+        raise RuntimeError(f"All providers failed. Details: {'; '.join(errors)}")
 
     async def stream(
         self,
@@ -131,7 +139,7 @@ class ProviderManager:
 
         order = list(self._fallback_order)
 
-        last_error = ""
+        errors = []
         for provider_name in order:
             provider = self._providers.get(provider_name)
             if not provider:
@@ -148,19 +156,24 @@ class ProviderManager:
 
             for attempt in range(provider.config.max_retries):
                 try:
+                    stream_ok = False
                     async for event in provider.stream(messages, tools=tools, **kwargs):
                         if event.get("type") == "error":
-                            last_error = f"{provider_name}: {event['error']}"
+                            errors.append(f"{provider_name}: {event['error']}")
                             break
                         yield event
                         if event.get("type") == "done":
                             provider.status = ProviderStatus.HEALTHY
                             return
                     else:
-                        continue
+                        if attempt < provider.config.max_retries - 1:
+                            await asyncio.sleep(2 ** attempt)
+                            continue
+                        errors.append(f"{provider_name}: stream finished without done event")
+                        break
                     break
                 except Exception as e:
-                    last_error = f"{provider_name}: {e}"
+                    err_msg = f"{provider_name}: {e}"
                     logger.warning(f"[ProviderManager] {provider_name} stream attempt {attempt + 1} failed: {e}")
 
                     if "429" in str(e) or "rate" in str(e).lower():
@@ -174,10 +187,15 @@ class ProviderManager:
                         wait = 2 ** attempt
                         await asyncio.sleep(wait)
                         continue
+                    errors.append(err_msg)
                     break
 
-        logger.error(f"All providers failed streaming. Last error: {last_error}")
-        yield {"type": "error", "error": last_error or "All LLM providers failed."}
+        if not errors:
+            err_msg = "No usable LLM providers registered. Please check that you configured GROQ_API_KEY, CEREBRAS_API_KEY, or OPENROUTER_API_KEY in your environment."
+        else:
+            err_msg = f"All LLM providers failed. Details: {'; '.join(errors)}"
+        logger.error(f"All providers failed streaming. {err_msg}")
+        yield {"type": "error", "error": err_msg}
 
     async def health_check_all(self) -> dict[str, bool]:
         results = {}
