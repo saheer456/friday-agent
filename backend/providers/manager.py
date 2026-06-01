@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 import time
 from typing import Any, AsyncIterator, Optional
 
@@ -106,6 +107,24 @@ class ProviderManager:
         self._rate_limiters[provider_name] = now
         return True
 
+    def _parse_retry_after(self, error_msg: str) -> float:
+        # Search for pattern "try again in X.XXs" or "try again in Xs" or "retry-after: X"
+        # e.g., "Please try again in 15.34s." or "Please try again in 21s."
+        match = re.search(r"try\s+again\s+in\s+(\d+(?:\.\d+)?)\s*(?:s|sec|second|seconds)?", error_msg, re.IGNORECASE)
+        if match:
+            return float(match.group(1))
+            
+        match = re.search(r"retry[-_]after\b\s*(?::|=)?\s*(\d+(?:\.\d+)?)", error_msg, re.IGNORECASE)
+        if match:
+            return float(match.group(1))
+            
+        match = re.search(r"limit\s+reset\s+in\s+(\d+(?:\.\d+)?)\s*(?:s|sec|second|seconds)?", error_msg, re.IGNORECASE)
+        if match:
+            return float(match.group(1))
+            
+        # Default cooldown
+        return 60.0
+
     async def generate(
         self,
         messages: list[dict],
@@ -134,7 +153,13 @@ class ProviderManager:
 
             if provider.status == ProviderStatus.RATE_LIMITED:
                 until = self._rate_limited_until.get(provider_name, 0.0)
-                if time.monotonic() < until:
+                remaining = until - time.monotonic()
+                if remaining > 0:
+                    logger.info(
+                        "[ProviderManager] Skipping rate-limited provider=%s (%.0fs remaining)",
+                        provider_name, remaining,
+                    )
+                    errors.append(f"{provider_name}: rate-limited ({remaining:.0f}s remaining)")
                     continue
                 provider.status = ProviderStatus.HEALTHY
 
@@ -166,8 +191,14 @@ class ProviderManager:
 
                     if "429" in err_str or "rate" in err_str.lower():
                         provider.status = ProviderStatus.RATE_LIMITED
-                        self._rate_limited_until[provider_name] = time.monotonic() + 60.0
-                        wait = 2 ** (attempt + 1)
+                        # Parse Retry-After or x-ratelimit-reset from error string if available
+                        cooldown = self._parse_retry_after(err_str)
+                        self._rate_limited_until[provider_name] = time.monotonic() + cooldown
+                        logger.warning(
+                            "[ProviderManager] %s rate-limited, cooldown=%.0fs",
+                            provider_name, cooldown,
+                        )
+                        wait = min(2 ** (attempt + 1), cooldown)
                         await asyncio.sleep(wait)
                         continue
 
@@ -210,7 +241,13 @@ class ProviderManager:
 
             if provider.status == ProviderStatus.RATE_LIMITED:
                 until = self._rate_limited_until.get(provider_name, 0.0)
-                if time.monotonic() < until:
+                remaining = until - time.monotonic()
+                if remaining > 0:
+                    logger.info(
+                        "[ProviderManager] Skipping rate-limited provider=%s (%.0fs remaining)",
+                        provider_name, remaining,
+                    )
+                    errors.append(f"{provider_name}: rate-limited ({remaining:.0f}s remaining)")
                     continue
                 provider.status = ProviderStatus.HEALTHY
 
@@ -266,8 +303,13 @@ class ProviderManager:
 
                     if "429" in err_str or "rate" in err_str.lower():
                         provider.status = ProviderStatus.RATE_LIMITED
-                        self._rate_limited_until[provider_name] = time.monotonic() + 60.0
-                        wait = 2 ** (attempt + 1)
+                        cooldown = self._parse_retry_after(err_str)
+                        self._rate_limited_until[provider_name] = time.monotonic() + cooldown
+                        logger.warning(
+                            "[ProviderManager] %s stream rate-limited, cooldown=%.0fs",
+                            provider_name, cooldown,
+                        )
+                        wait = min(2 ** (attempt + 1), cooldown)
                         await asyncio.sleep(wait)
                         continue
 
