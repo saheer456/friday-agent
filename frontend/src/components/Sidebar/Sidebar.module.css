@@ -360,3 +360,63 @@
   color: #b91c1c;
 }
 
+/* ── Search bar ─────────────────────────────────────────────── */
+.searchContainer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 20px 4px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: rgba(242, 236, 227, 0.6);
+  border: 1px solid var(--outline);
+  transition: border-color 0.2s;
+}
+.searchContainer:focus-within {
+  border-color: var(--primary-border);
+}
+.searchIcon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.searchInput {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-size: 0.82rem;
+  color: var(--text);
+  outline: none;
+  font-family: var(--font-body);
+}
+.searchInput::placeholder {
+  color: var(--text-muted);
+}
+.searchClear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.searchClear:hover {
+  color: var(--text);
+}
+
+/* ── Session meta (timestamp + count) ───────────────────────── */
+.sessionMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.metaItem {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+

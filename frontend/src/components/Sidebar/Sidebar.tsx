@@ -1,10 +1,13 @@
-import { useState } from 'react';
-import { Plus, Trash, Check, Edit3, MessageSquare, ChevronLeft, ChevronRight, Download } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { Plus, Trash, Check, Edit3, MessageSquare, ChevronLeft, ChevronRight, Download, Search, X, Clock, MessageCircle } from 'lucide-react';
 import styles from './Sidebar.module.css';
 
 interface Session {
   id: string;
   title: string;
+  created_at?: string;
+  updated_at?: string;
+  message_count?: number;
 }
 
 interface SidebarProps {
@@ -17,6 +20,19 @@ interface SidebarProps {
   onSelectSession: (id: string) => void;
   onDeleteSession: (id: string) => void;
   onRenameSession: (id: string, newTitle: string) => void;
+  onSearchSessions?: (query: string) => void;
+}
+
+function timeAgo(dateStr?: string): string {
+  if (!dateStr) return '';
+  const d = new Date(dateStr.endsWith('Z') ? dateStr : dateStr + 'Z');
+  if (isNaN(d.getTime())) return '';
+  const sec = (Date.now() - d.getTime()) / 1000;
+  if (sec < 60) return 'now';
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+  if (sec < 604800) return `${Math.floor(sec / 86400)}d ago`;
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
 export function Sidebar({
@@ -29,10 +45,25 @@ export function Sidebar({
   onSelectSession,
   onDeleteSession,
   onRenameSession,
+  onSearchSessions,
 }: SidebarProps) {
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  const handleSearch = useCallback((value: string) => {
+    setSearchQuery(value);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      onSearchSessions?.(value);
+    }, 300);
+  }, [onSearchSessions]);
+
+  useEffect(() => {
+    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
+  }, []);
 
   const handleExportSession = async (id: string) => {
     try {
@@ -112,6 +143,23 @@ export function Sidebar({
           </button>
         </div>
 
+        {/* Search bar */}
+        <div className={styles.searchContainer}>
+          <Search size={14} className={styles.searchIcon} />
+          <input
+            className={styles.searchInput}
+            type="text"
+            placeholder="Search conversations…"
+            value={searchQuery}
+            onChange={(e) => handleSearch(e.target.value)}
+          />
+          {searchQuery && (
+            <button className={styles.searchClear} onClick={() => { setSearchQuery(''); onSearchSessions?.(''); }}>
+              <X size={14} />
+            </button>
+          )}
+        </div>
+
         {/* Action button to create a new session */}
         <button className={styles.newChatBtn} onClick={onCreateSession}>
           <Plus size={16} />
@@ -121,7 +169,7 @@ export function Sidebar({
         {/* List of chat sessions */}
         <div className={styles.sessionList}>
           {sessions.length === 0 ? (
-            <p className={styles.emptyText}>No active dialogue channels.</p>
+            <p className={styles.emptyText}>{searchQuery ? 'No matching conversations.' : 'No active dialogue channels.'}</p>
           ) : (
             sessions.map(s => {
               const isActive = s.id === activeSessionId;
@@ -183,12 +231,26 @@ export function Sidebar({
                         onClick={(e) => e.stopPropagation()}
                       />
                     ) : (
-                      <span
-                        className={styles.sessionTitle}
-                        onDoubleClick={() => handleStartRename(s)}
-                      >
-                        {s.title}
-                      </span>
+                      <>
+                        <span
+                          className={styles.sessionTitle}
+                          onDoubleClick={() => handleStartRename(s)}
+                        >
+                          {s.title}
+                        </span>
+                        <span className={styles.sessionMeta}>
+                          {s.message_count != null && s.message_count > 0 && (
+                            <span className={styles.metaItem}>
+                              <MessageCircle size={11} />
+                              {s.message_count}
+                            </span>
+                          )}
+                          <span className={styles.metaItem}>
+                            <Clock size={11} />
+                            {timeAgo(s.updated_at || s.created_at)}
+                          </span>
+                        </span>
+                      </>
                     )}
                   </div>
 

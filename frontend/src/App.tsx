@@ -80,6 +80,9 @@ function App() {
     renameSession,
     unlinkFile,
     setActiveSessionFiles,
+    fetchSessions,
+    loadMoreMessages,
+    hasMoreMessages,
   } = useChat(handleStatusChange, hasFullAccess ? queueTTS : () => {}, { limitedMode });
 
   const handleSend = async (text: string, isVoiceMode: boolean) => {
@@ -254,6 +257,7 @@ function App() {
         onSelectSession={selectSession}
         onDeleteSession={deleteSession}
         onRenameSession={renameSession}
+        onSearchSessions={fetchSessions}
       />
       <div className={styles.mainCol}>
         <Header
@@ -280,6 +284,9 @@ function App() {
           isSpeaking={isPlaying}
           onDropFile={hasFullAccess ? handleUpload : undefined}
           onSelectSuggestion={(text) => setComposerValue(text)}
+          onLoadMore={() => loadMoreMessages(activeSessionId)}
+          hasMore={hasMoreMessages}
+          isLoadingHistory={isLoadingSession}
         />
 
         <div className={styles.composerWrap}>

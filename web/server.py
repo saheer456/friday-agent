@@ -39,6 +39,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from typing import Optional
 from pydantic import BaseModel, Field
 import httpx
 import asyncio
@@ -766,29 +767,37 @@ async def clear_history(session_id: str | None = None, _auth: dict = Depends(ver
 
 
 class SessionCreateBody(BaseModel):
-    id: str
-    title: str
+    title: str = Field(default="New Chat", max_length=200)
 
 
 class SessionUpdateBody(BaseModel):
-    title: str
+    title: str = Field(..., max_length=200)
+
+
+class SessionSearchParams(BaseModel):
+    q: str = Field(default="", max_length=200)
 
 
 @app.get("/api/sessions")
-async def list_sessions(_auth: dict = Depends(verify_auth)):
+async def list_sessions(
+    search: Optional[str] = None,
+    include_archived: bool = False,
+    _auth: dict = Depends(verify_auth),
+):
     from backend.memory import chat_history
-    sessions = await chat_history.get_sessions()
+    user_id = _auth.get("id") or _auth.get("sub") or _auth.get("email", "").split("@")[0]
+    sessions = await chat_history.get_sessions(search=search, include_archived=include_archived, user_id=user_id)
     if not sessions:
-        await chat_history.create_session("default-session", "Default Chat")
-        sessions = await chat_history.get_sessions()
+        sid = await chat_history.create_session("Default Chat", user_id=user_id)
+        sessions = await chat_history.get_sessions(user_id=user_id)
     return {"sessions": sessions}
 
 
 @app.post("/api/sessions")
 async def create_session(body: SessionCreateBody, _auth: dict = Depends(verify_auth)):
     from backend.memory import chat_history
-    await chat_history.create_session(body.id, body.title)
-    return {"ok": True, "id": body.id, "title": body.title}
+    sid = await chat_history.create_session(body.title)
+    return {"ok": True, "id": sid, "title": body.title}
 
 
 @app.put("/api/sessions/{session_id}")
@@ -814,7 +823,7 @@ async def export_session(session_id: str, format: str = "markdown", _auth: dict 
     messages = await chat_history.get_latest_chat_messages(session_id, limit=500)
     if not messages:
         raise HTTPException(status_code=404, detail="Session has no messages or does not exist.")
-        
+
     if format.lower() == "json":
         content = json.dumps(messages, indent=2, ensure_ascii=False)
         headers = {"Content-Disposition": f"attachment; filename=session_{session_id}.json"}
@@ -830,7 +839,7 @@ async def export_session(session_id: str, format: str = "markdown", _auth: dict 
             created_str = f" ({m['created_at']})" if m.get("created_at") else ""
             md_lines.append(f"### {role_label}{created_str}\n")
             md_lines.append(f"{m['content']}\n\n---\n")
-            
+
         md_content = "\n".join(md_lines)
         headers = {"Content-Disposition": f"attachment; filename=session_{session_id}.md"}
         return StreamingResponse(
@@ -841,11 +850,17 @@ async def export_session(session_id: str, format: str = "markdown", _auth: dict 
 
 
 @app.get("/api/sessions/{session_id}/messages")
-async def get_session_messages(session_id: str, _auth: dict = Depends(verify_auth)):
+async def get_session_messages(
+    session_id: str,
+    limit: int = 100,
+    before_id: Optional[int] = None,
+    _auth: dict = Depends(verify_auth),
+):
     from backend.memory import chat_history
-    messages = await chat_history.get_latest_chat_messages(session_id, limit=100)
+    messages = await chat_history.get_latest_chat_messages(session_id, limit=limit, before_id=before_id)
     files = await chat_history.get_session_files(session_id)
-    return {"messages": messages, "files": files}
+    count = await chat_history.get_message_count(session_id)
+    return {"messages": messages, "files": files, "total": count}
 class MemoryAddBody(BaseModel):
     content: str = Field(..., min_length=1, max_length=4_000)
     category: str = Field(default="manual", max_length=100)
@@ -997,19 +1012,21 @@ class TTSBody(BaseModel):
 async def tts_endpoint(body: TTSBody, _auth: dict = Depends(verify_auth)):
     """Synthesize text → audio via the backend TTS pipeline (edge-tts / Kokoro).
     Returns MP3 or WAV bytes for the browser to play natively.
+    Returns empty audio (silence) for empty/short text instead of errors.
     """
     from fastapi.responses import Response as RawResponse
     from backend.tts import synthesize, clean_for_speech
 
     cleaned = clean_for_speech(body.text.strip())
-    if not cleaned:
-        raise HTTPException(status_code=400, detail="Empty text after cleaning")
+    if not cleaned or len(cleaned) < 2:
+        return RawResponse(content=b"", media_type="audio/mpeg")
     try:
         audio, suffix, _ = await synthesize(cleaned)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"TTS error: {e}") from e
+    except Exception:
+        audio = b""
+        suffix = ".mp3"
     if not audio:
-        raise HTTPException(status_code=500, detail="TTS returned no audio")
+        return RawResponse(content=b"", media_type="audio/mpeg")
     media_type = "audio/mpeg" if suffix == ".mp3" else "audio/wav"
     return RawResponse(content=audio, media_type=media_type)
 
@@ -1019,14 +1036,15 @@ async def speak_endpoint(body: TTSBody, _auth: dict = Depends(verify_auth)):
     """Convert Markdown → natural spoken prose via LLM, then synthesize.
     Uses llama-3.1-8b-instant (fast, cheap) to rewrite the text naturally
     before passing to TTS. Far better quality than regex-based cleaning.
+    Returns empty audio (silence) for empty/short text instead of errors.
     """
     from fastapi.responses import Response as RawResponse
     from backend.tts import synthesize, clean_for_speech
     import httpx, os
 
     raw = body.text.strip()
-    if not raw:
-        raise HTTPException(status_code=400, detail="Empty text")
+    if not raw or len(raw) < 2:
+        return RawResponse(content=b"", media_type="audio/mpeg")
 
     # Step 1: convert Markdown → spoken prose via a fast LLM call
     spoken = raw  # fallback if LLM fails
@@ -1062,14 +1080,15 @@ async def speak_endpoint(body: TTSBody, _auth: dict = Depends(verify_auth)):
 
     # Step 2: synthesize
     spoken = clean_for_speech(spoken)   # final safety pass
-    if not spoken:
-        raise HTTPException(status_code=400, detail="Empty after cleaning")
+    if not spoken or len(spoken) < 2:
+        return RawResponse(content=b"", media_type="audio/mpeg")
     try:
         audio, suffix, _ = await synthesize(spoken)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"TTS error: {e}") from e
+    except Exception:
+        audio = b""
+        suffix = ".mp3"
     if not audio:
-        raise HTTPException(status_code=500, detail="No audio returned")
+        return RawResponse(content=b"", media_type="audio/mpeg")
     media_type = "audio/mpeg" if suffix == ".mp3" else "audio/wav"
     return RawResponse(content=audio, media_type=media_type)
 

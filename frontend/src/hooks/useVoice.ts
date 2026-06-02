@@ -291,7 +291,7 @@ export function useVoice(
   // ── queueTTS — main entry point ───────────────────────────────
   const queueTTS = useCallback(async (fullText: string) => {
     const clean = stripMarkdown(fullText);
-    if (!clean) return;
+    if (!clean || clean.length < 3) return;
 
     const chunks = splitIntoChunks(clean);
     if (!chunks.length) return;

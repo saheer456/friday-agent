@@ -220,3 +220,72 @@
   background: var(--border);
   color: var(--primary);
 }
+
+/* ── Date separators ───────────────────────────────────── */
+.dateSeparator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 32px 0 20px;
+}
+.dateSeparator::before,
+.dateSeparator::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--outline);
+}
+.dateLabel {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ── Load-more sentinel (infinite scroll) ──────────────── */
+.loadMoreSentinel {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 12px 0;
+  min-height: 40px;
+}
+.loadMoreHint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.loadMoreSpinner {
+  animation: spin 1s linear infinite;
+  color: var(--primary);
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Loading history overlay ───────────────────────────── */
+.loadingHistory {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+/* ── Streaming indicator ───────────────────────────────── */
+.streaming {
+  opacity: 0.85;
+}
+
+/* ── Welcome subtitle ──────────────────────────────────── */
+.welcomeSub {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: -8px;
+  font-weight: 400;
+}

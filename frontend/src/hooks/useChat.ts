@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Message, Phase } from '../types/api';
 import { authFetch } from '../lib/api';
 import { clearLocalMemory, retrieveLocalMemory, saveLocalMemory } from '../lib/localMemory';
+import { supabase } from '../lib/supabase';
 
 interface UseChatOptions {
   limitedMode?: boolean;
@@ -21,7 +22,7 @@ export function useChat(
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
 
-  const [sessions, setSessions] = useState<{ id: string; title: string; created_at?: string }[]>([]);
+  const [sessions, setSessions] = useState<{ id: string; title: string; created_at?: string; updated_at?: string; message_count?: number }[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string>('');
   const [activeSessionFiles, setActiveSessionFiles] = useState<string[]>([]);
 
@@ -36,19 +37,26 @@ export function useChat(
   // Generation counter for stale-response guarding
   const fetchGenRef = useRef(0);
 
+  // Cursor for loading older messages
+  const messagesCursorRef = useRef<number | undefined>(undefined);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+
   const addSystemMessage = useCallback((text: string) => {
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
     setMessages(prev => [...prev, { id: Date.now().toString(), role: 'assistant', content: text, streaming: false, timestamp: timeStr }]);
   }, []);
 
-  const fetchSessions = useCallback(async (): Promise<{ id: string; title: string; created_at?: string }[]> => {
+  const searchQueryRef = useRef('');
+  const fetchSessions = useCallback(async (searchQuery?: string): Promise<{ id: string; title: string; created_at?: string; updated_at?: string; message_count?: number }[]> => {
+    searchQueryRef.current = searchQuery || '';
     if (limitedMode) return [];
     try {
-      const res = await authFetch('/api/sessions');
+      const params = searchQuery ? `?search=${encodeURIComponent(searchQuery)}` : '';
+      const res = await authFetch(`/api/sessions${params}`);
       if (res.ok) {
         const data = await res.json();
-        const list: { id: string; title: string; created_at?: string }[] = data.sessions || [];
-        list.sort((a, b) => ((b.created_at || '') > (a.created_at || '') ? 1 : -1));
+        const list: { id: string; title: string; created_at?: string; updated_at?: string; message_count?: number }[] = data.sessions || [];
+        list.sort((a, b) => ((b.updated_at || b.created_at || '') > (a.updated_at || a.created_at || '') ? 1 : -1));
         setSessions(list);
         return list;
       }
@@ -68,6 +76,8 @@ export function useChat(
     if (limitedMode) return;
 
     setIsLoadingSession(true);
+    messagesCursorRef.current = undefined;
+    setHasMoreMessages(false);
 
     const gen = ++fetchGenRef.current;
     try {
@@ -106,6 +116,11 @@ export function useChat(
         setIsLoadingSession(false);
         if (mappedMessages.length > 0) {
           firstMsgSentRef.current = true;
+          const dbIds = data.messages.map((m: any) => m.id).filter((id: any) => typeof id === 'number');
+          messagesCursorRef.current = dbIds.length > 0 ? Math.min(...dbIds) : undefined;
+          setHasMoreMessages(data.total !== undefined ? mappedMessages.length < data.total : dbIds.length > 0);
+        } else {
+          setHasMoreMessages(false);
         }
       } else {
         setIsLoadingSession(false);
@@ -116,6 +131,43 @@ export function useChat(
       console.error('Error loading session messages:', e);
     }
   }, [limitedMode]);
+
+  const loadMoreMessages = useCallback(async (sessionId: string): Promise<number> => {
+    const beforeId = messagesCursorRef.current;
+    if (beforeId === undefined) return 0;
+    try {
+      const res = await authFetch(`/api/sessions/${sessionId}/messages?limit=50&before_id=${beforeId}`);
+      if (res.ok) {
+        const data = await res.json();
+        const dbIds = data.messages.map((m: any) => m.id).filter((id: any) => typeof id === 'number');
+        const more = (data.messages || []).map((m: any, idx: number) => {
+          let timeStr = '';
+          if (m.created_at) {
+            try {
+              const d = new Date(m.created_at);
+              if (!isNaN(d.getTime())) {
+                timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+              }
+            } catch { /* ignore */ }
+          }
+          return {
+            id: `db-${m.id}`,
+            role: m.role,
+            content: m.content,
+            streaming: false,
+            timestamp: timeStr,
+          };
+        });
+        setMessages(prev => [...more, ...prev]);
+        messagesCursorRef.current = dbIds.length > 0 ? Math.min(...dbIds) : undefined;
+        setHasMoreMessages(dbIds.length >= 50);
+        return more.length;
+      }
+    } catch (e) {
+      console.error('Error loading more messages:', e);
+    }
+    return 0;
+  }, []);
 
   // ── Personalized streaming greeting ──────────────────────────
   const fetchGreeting = useCallback(async () => {
@@ -189,6 +241,51 @@ export function useChat(
       } as any]);
     }
   }, []);
+
+  // ── Supabase Realtime subscription ─────────────────────────
+  useEffect(() => {
+    if (!supabase || limitedMode || searchQueryRef.current) return;
+
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let cancelled = false;
+
+    (async () => {
+      const { data: { user } } = await supabase!.auth.getUser();
+      if (!user || cancelled) return;
+
+      channel = supabase!
+        .channel('sessions-realtime')
+        .on('postgres_changes',
+          { event: '*', schema: 'public', table: 'sessions', filter: `user_id=eq.${user.id}` },
+          (payload) => {
+            if (cancelled || searchQueryRef.current) return;
+            const { eventType, new: row } = payload;
+
+            if (eventType === 'INSERT') {
+              setSessions(prev =>
+                prev.some(s => s.id === row.id)
+                  ? prev
+                  : [{ id: row.id, title: row.title, created_at: row.created_at, updated_at: row.updated_at, message_count: row.message_count }, ...prev]
+              );
+            } else if (eventType === 'UPDATE') {
+              setSessions(prev =>
+                prev.map(s => s.id === row.id
+                  ? { ...s, title: row.title, updated_at: row.updated_at, message_count: row.message_count }
+                  : s)
+              );
+            } else if (eventType === 'DELETE') {
+              setSessions(prev => prev.filter(s => s.id !== payload.old.id));
+            }
+          },
+        )
+        .subscribe();
+    })();
+
+    return () => {
+      cancelled = true;
+      if (channel) supabase!.removeChannel(channel);
+    };
+  }, [limitedMode]);
 
   const createSession = useCallback(async (title?: string) => {
     if (limitedMode) return;
@@ -509,8 +606,10 @@ export function useChat(
                 const sentBoundary = ttsSentence.match(/^([\s\S]+?[.!?\n])(\s|$)/);
                 if (sentBoundary && ttsSentence.length >= 20) {
                   const sentenceToSpeak = sentBoundary[1].trim();
-                  ttsSentence = ttsSentence.slice(sentBoundary[0].length);
-                  queueTTS(sentenceToSpeak);
+                  if (sentenceToSpeak.length >= 3) {
+                    ttsSentence = ttsSentence.slice(sentBoundary[0].length);
+                    queueTTS(sentenceToSpeak);
+                  }
                 }
               }
             }
@@ -581,5 +680,7 @@ export function useChat(
     reconnectCount,
     isReconnecting,
     isLoadingSession,
+    loadMoreMessages,
+    hasMoreMessages,
   };
 }
