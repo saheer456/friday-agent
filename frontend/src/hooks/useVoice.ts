@@ -16,19 +16,30 @@ declare global {
 function stripMarkdown(text: string): string {
   return text
     .replace(/```[\s\S]*?```/g, '')          // code blocks
-    .replace(/`[^`]*`/g, '')                  // inline code
+    .replace(/`[^`]*`/g, ' code ')            // inline code
     .replace(/\$\$[\s\S]+?\$\$/g, 'an equation')  // LaTeX block
     .replace(/\$[^$\n]+?\$/g, 'a formula')    // LaTeX inline
     .replace(/^#{1,6}\s+/gm, '')              // headings
     .replace(/\*\*([^*]+)\*\*/g, '$1')        // bold
     .replace(/\*([^*]+)\*/g, '$1')            // italic
+    .replace(/~~.*?~~/g, '')                  // strikethrough
+    .replace(/:([a-zA-Z_]+):/g, '')           // colon emoji shortcodes
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links
     .replace(/^[-*+]\s+/gm, '')              // unordered list bullets
-    .replace(/^\d+\.\s+/gm, '')             // ordered list bullets
+    .replace(/^\d+[.)]\s+/gm, '')            // ordered list bullets
+    .replace(/^- \[[ xX]\]/gm, '')           // task list markers
     .replace(/^>\s*/gm, '')                  // blockquotes
     .replace(/\|[^\n]*/g, '')               // table rows
     .replace(/https?:\S+/g, '')              // bare URLs
+    .replace(/[#>]/g, '')                    // remaining hash/gt
     .replace(/\[!(NOTE|TIP|WARNING|CAUTION|IMPORTANT)\]/gi, '')  // callout markers
+    .replace(/([!?.:])\1+/g, '$1')           // collapse repeated punctuation !!! → !
+    .replace(/[→←⇒⇐↔↕➡⬅]/g, '')             // arrows
+    .replace(/->|=>|<-|<=/g, ' ')            // text arrows
+    .replace(/[:;=][)\](dpDP\/\\@|]/g, '')   // ASCII emoticons
+    .replace(/[\u{1F000}-\u{10FFFF}]/gu, '') // emoji
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')  // HTML entities
+    .replace(/&[#a-zA-Z0-9]+;/g, '')         // unknown entities
     .replace(/\s+/g, ' ')
     .trim();
 }

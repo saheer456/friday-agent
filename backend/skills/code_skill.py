@@ -132,6 +132,7 @@ class CodeSkill(BaseSkill):
     def execute_python(self, code: str, timeout: int = None) -> SkillResult:
         """Run Python code in an isolated subprocess and return its output."""
         timeout = timeout or self._timeout
+        tmp_path = None
         try:
             # Write code to a temp file — avoids shell injection
             with tempfile.NamedTemporaryFile(
@@ -146,7 +147,6 @@ class CodeSkill(BaseSkill):
                 text=True,
                 timeout=timeout,
             )
-            os.unlink(tmp_path)
 
             stdout = "\n".join(proc.stdout.splitlines()[:self._max_lines])
             stderr = proc.stderr.strip()
@@ -165,6 +165,12 @@ class CodeSkill(BaseSkill):
             return SkillResult.fail(f"Code execution timed out after {timeout}s.")
         except Exception as e:
             return SkillResult.fail(f"Execution error: {e}")
+        finally:
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
     @skill_action(
         description="Analyse a code snippet and explain what it does, its complexity, and any issues.",

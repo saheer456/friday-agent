@@ -233,6 +233,12 @@ async def lifespan(app: FastAPI):
         print("[SHUTDOWN] ✓ Task queue stopped")
     except Exception:
         pass
+    try:
+        from backend.tools_utils import close_http_clients
+        await close_http_clients()
+        print("[SHUTDOWN] ✓ HTTP clients closed")
+    except Exception:
+        pass
 
 
 limiter = Limiter(key_func=get_remote_address)

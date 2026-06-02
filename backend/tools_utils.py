@@ -6,12 +6,20 @@ import io
 import subprocess
 import webbrowser
 import pyperclip
+import threading
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
 import httpx
 
 from . import rag, scraper
+
+
+def _unlink_later(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 # ── Module-level HTTP client (reuses connection pool) ─────────────────────────
 _weather_client: httpx.AsyncClient | None = None
@@ -21,6 +29,14 @@ def _get_weather_client() -> httpx.AsyncClient:
     if _weather_client is None:
         _weather_client = httpx.AsyncClient(timeout=8.0)
     return _weather_client
+
+
+async def close_http_clients() -> None:
+    global _weather_client
+    if _weather_client is not None:
+        await _weather_client.aclose()
+        _weather_client = None
+    await scraper.close_client()
 
 
 def _open_file(path: str) -> None:
@@ -335,9 +351,13 @@ END:VCALENDAR
         fd, path = tempfile.mkstemp(suffix=".ics")
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
             f.write(ics_content)
-            
+
         # Open with default calendar app
         _open_file(path)
+
+        # Schedule cleanup after 60 seconds (enough time for the OS to open the file)
+        threading.Timer(60, lambda: _unlink_later(path)).start()
+
         return {"status": "success", "message": "Opened calendar app to save event."}
     except Exception as e:
         return {"error": str(e)}

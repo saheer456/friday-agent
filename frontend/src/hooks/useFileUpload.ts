@@ -41,12 +41,15 @@ export function useFileUpload() {
         fd.append('session_id', sessionId);
       }
       const res = await authFetch('/api/upload', { method: 'POST', body: fd });
-      const data = await res.json();
 
       if (!res.ok) {
-        showToast(data.detail || 'Upload failed.', 'error');
+        let detail = 'Upload failed.';
+        try { const d = await res.json(); detail = d.detail || detail; } catch {}
+        showToast(detail, 'error');
         return null;
       }
+
+      const data = await res.json();
 
       showToast(`✓ "${data.filename}" ingested — ${data.chunks} chunks, ~${data.words} words`, 'success');
       return data;

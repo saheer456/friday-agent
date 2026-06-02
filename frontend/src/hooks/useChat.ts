@@ -19,6 +19,7 @@ export function useChat(
 
   const [reconnectCount, setReconnectCount] = useState(0);
   const [isReconnecting, setIsReconnecting] = useState(false);
+  const [isLoadingSession, setIsLoadingSession] = useState(false);
 
   const [sessions, setSessions] = useState<{ id: string; title: string; created_at?: string }[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string>('');
@@ -28,6 +29,12 @@ export function useChat(
   const firstMsgSentRef = useRef(false);
   const activeSessionIdRef = useRef(activeSessionId);
   useEffect(() => { activeSessionIdRef.current = activeSessionId; }, [activeSessionId]);
+
+  // Abort controller for in-flight stream — cancelled on session switch
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Generation counter for stale-response guarding
+  const fetchGenRef = useRef(0);
 
   const addSystemMessage = useCallback((text: string) => {
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -40,7 +47,8 @@ export function useChat(
       const res = await authFetch('/api/sessions');
       if (res.ok) {
         const data = await res.json();
-        const list = data.sessions || [];
+        const list: { id: string; title: string; created_at?: string }[] = data.sessions || [];
+        list.sort((a, b) => ((b.created_at || '') > (a.created_at || '') ? 1 : -1));
         setSessions(list);
         return list;
       }
@@ -51,9 +59,17 @@ export function useChat(
   }, [limitedMode]);
 
   const selectSession = useCallback(async (sessionId: string) => {
+    // Cancel any in-flight stream
+    abortRef.current?.abort();
+    abortRef.current = null;
+
     setActiveSessionId(sessionId);
     firstMsgSentRef.current = false;
     if (limitedMode) return;
+
+    setIsLoadingSession(true);
+
+    const gen = ++fetchGenRef.current;
     try {
       const res = await authFetch(`/api/sessions/${sessionId}/messages`);
       if (res.ok) {
@@ -84,13 +100,19 @@ export function useChat(
             timestamp: timeStr,
           };
         });
+        if (gen !== fetchGenRef.current) return; // stale response
         setMessages(mappedMessages.length > 0 ? mappedMessages : []);
         setActiveSessionFiles(data.files || []);
+        setIsLoadingSession(false);
         if (mappedMessages.length > 0) {
           firstMsgSentRef.current = true;
         }
+      } else {
+        setIsLoadingSession(false);
       }
     } catch (e) {
+      if (gen !== fetchGenRef.current) return;
+      setIsLoadingSession(false);
       console.error('Error loading session messages:', e);
     }
   }, [limitedMode]);
@@ -170,16 +192,17 @@ export function useChat(
 
   const createSession = useCallback(async (title?: string) => {
     if (limitedMode) return;
-    const newId = `session-${Date.now()}`;
     try {
       const res = await authFetch('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: newId, title: title || 'New Chat' }),
+        body: JSON.stringify({ title: title || 'New Chat' }),
       });
       if (res.ok) {
+        const data = await res.json();
+        const serverId = data.id;
         await fetchSessions();
-        setActiveSessionId(newId);
+        setActiveSessionId(serverId);
         firstMsgSentRef.current = false;
         setMessages([]);
         setActiveSessionFiles([]);
@@ -196,19 +219,25 @@ export function useChat(
     try {
       const res = await authFetch(`/api/sessions/${sessionId}`, { method: 'DELETE' });
       if (res.ok) {
-        const remaining = sessions.filter(s => s.id !== sessionId);
-        setSessions(remaining);
-        if (remaining.length > 0) {
-          await selectSession(remaining[0].id);
+        // Use functional update to avoid stale closure
+        let nextId: string | null = null;
+        setSessions(prev => {
+          const remaining = prev.filter(s => s.id !== sessionId);
+          if (remaining.length > 0) {
+            nextId = remaining[0].id;
+          }
+          return remaining;
+        });
+        if (nextId) {
+          await selectSession(nextId);
         } else {
           await createSession();
         }
-        await fetchSessions();
       }
     } catch (e) {
       console.error('Error deleting session:', e);
     }
-  }, [limitedMode, sessions, fetchSessions, selectSession, createSession]);
+  }, [limitedMode, selectSession, createSession]);
 
   const renameSession = useCallback(async (sessionId: string, newTitle: string) => {
     if (limitedMode) return;
@@ -271,6 +300,12 @@ export function useChat(
   const sendMessage = useCallback(async (text: string, isVoiceMode: boolean) => {
     if (!text.trim()) return;
 
+    // Abort any previous stream
+    abortRef.current?.abort();
+
+    const abortController = new AbortController();
+    abortRef.current = abortController;
+
     const userMsgId = `u-${Date.now()}`;
     const aiMsgId   = `a-${Date.now()}`;
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -315,6 +350,7 @@ export function useChat(
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
+          signal: abortController.signal,
         });
 
         if (!res.ok) throw new Error((await res.text()) || res.statusText);
@@ -333,9 +369,32 @@ export function useChat(
         let planSteps: { title: string; detail: string; done: boolean }[] = [];
         let planMsgId: string | null = null;
 
+        const streamGen = fetchGenRef.current;
+
         outer: while (!streamDone) {
+          if (streamGen !== fetchGenRef.current) break outer; // session switched
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done) {
+            streamDone = true;
+            success = true;
+            const finalText = fullText;
+            setMessages(prev =>
+              prev.map(m => m.id === aiMsgId ? { ...m, streaming: false, content: finalText } : m)
+            );
+            if (planMsgId) {
+              const finalSteps = planSteps.map(s => ({ ...s, done: true }));
+              setMessages(prev =>
+                prev.map(m => m.id === planMsgId
+                  ? { ...m, planDone: true, planSteps: finalSteps } as any
+                  : m)
+              );
+            }
+            if (finalText.trim() && !limitedMode) {
+              const leftover = ttsSentence.trim();
+              if (leftover) queueTTS(leftover);
+            }
+            break outer;
+          }
 
           buffer += decoder.decode(value, { stream: true });
 
@@ -476,6 +535,9 @@ export function useChat(
           setPhases(p => [...p, { id: 'fault', title: 'Subsystem fault', detail: msg }]);
         }
       } finally {
+        if (abortRef.current === abortController) {
+          abortRef.current = null;
+        }
         setIsReconnecting(false);
         setReconnectCount(0);
       }
@@ -518,5 +580,6 @@ export function useChat(
     setActiveSessionFiles,
     reconnectCount,
     isReconnecting,
+    isLoadingSession,
   };
 }

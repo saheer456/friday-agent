@@ -267,6 +267,7 @@ class ProviderManager:
                                 provider_name,
                                 err_detail,
                             )
+                            yield event
                             break
                         if event.get("type") == "text":
                             text_chunks += 1

@@ -83,6 +83,7 @@ function App() {
   } = useChat(handleStatusChange, hasFullAccess ? queueTTS : () => {}, { limitedMode });
 
   const handleSend = async (text: string, isVoiceMode: boolean) => {
+    if (chatBusy) return;
     stopAudio();
     await sendMessage(text, isVoiceMode);
   };

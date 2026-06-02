@@ -17,6 +17,13 @@ def _get_scrape_client() -> httpx.AsyncClient:
         _scrape_client = httpx.AsyncClient(timeout=10.0, headers=_HEADERS, follow_redirects=True)
     return _scrape_client
 
+
+async def close_client() -> None:
+    global _scrape_client
+    if _scrape_client is not None:
+        await _scrape_client.aclose()
+        _scrape_client = None
+
 async def scrape_url(url: str) -> str:
     """Fetches and extracts the main readable content from a URL."""
     try:

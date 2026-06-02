@@ -68,7 +68,7 @@ async def _get_context(user_message: str, session_id: str = "default-session") -
     from . import rag
     parts = []
     try:
-        rag_result = rag.search_personal_data(user_message)
+        rag_result = await asyncio.to_thread(rag.search_personal_data, user_message)
         if rag_result and rag_result.strip():
             parts.append(f"Personal data context:\n{rag_result}")
     except Exception as e:
@@ -175,7 +175,8 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
 
             session_history = conversation_histories[session_id]
 
-        session_history.append({"role": "user", "content": user_message})
+        async with _history_lock:
+            session_history.append({"role": "user", "content": user_message})
         try:
             await chat_history.save_chat_message(session_id, "user", user_message)
         except Exception as e:
@@ -411,7 +412,8 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
                     "tool_calls": tool_calls,
                 }
                 messages.append(assistant_msg)
-                session_history.append(assistant_msg)
+                async with _history_lock:
+                    session_history.append(assistant_msg)
 
                 if emit_phases:
                     yield (
@@ -456,17 +458,6 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
                         continue
                     executed_tool_calls.add(call_sig)
 
-                    try:
-                        json.loads(fn_args) if isinstance(fn_args, str) else fn_args
-                    except (json.JSONDecodeError, TypeError):
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc_id,
-                            "content": f"Error: Invalid JSON arguments for {fn_name}.",
-                        })
-                        consecutive_failures += 1
-                        continue
-
                     t0 = time.monotonic()
                     res_str = ""
                     logger.debug(
@@ -489,7 +480,11 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
                         len(res_str or ""),
                     )
 
-                    is_failure = res_str.startswith("[Error:") or '"status": "failed"' in res_str
+                    try:
+                        res_obj = json.loads(res_str)
+                        is_failure = res_obj.get("status") == "failed"
+                    except (json.JSONDecodeError, TypeError):
+                        is_failure = res_str.startswith("[Error:")
                     tool_memory.record_result(
                         tool=fn_name, inputs={"args": fn_args},
                         outputs=res_str, success=not is_failure,
@@ -518,20 +513,23 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
                         "tool_call_id": tc_id,
                         "content": res_str,
                     })
-                    session_history.append({"role": "tool", "tool_call_id": tc_id, "content": res_str})
+                    async with _history_lock:
+                        session_history.append({"role": "tool", "tool_call_id": tc_id, "content": res_str})
 
                     await event_bus.emit("tool_finished", {"tool": fn_name, "success": not is_failure})
 
                 continue
             else:
                 if full_response and not full_response.startswith("[Error:"):
-                    session_history.append({"role": "assistant", "content": full_response})
+                    async with _history_lock:
+                        session_history.append({"role": "assistant", "content": full_response})
                     try:
                         await chat_history.save_chat_message(session_id, "assistant", full_response)
                     except Exception as e:
                         logger.error(f"Error saving assistant message to DB: {e}")
                     if not _is_smalltalk(user_message):
-                        asyncio.create_task(MemoryManager.save_memory(user_message, full_response))
+                        save_task = asyncio.create_task(MemoryManager.save_memory(user_message, full_response))
+                        save_task.add_done_callback(lambda t: t.exception() and logger.error("save_memory failed: %s", t.exception()))
                         await event_bus.emit("memory_saved", {"user": user_message[:100]})
                 break
         else:

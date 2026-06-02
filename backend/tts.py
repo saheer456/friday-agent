@@ -32,9 +32,6 @@ KOKORO_MODEL_PATH = os.getenv("FRIDAY_TTS_MODEL", "kokoro-v1.0.onnx")
 KOKORO_VOICES_PATH = os.getenv("FRIDAY_TTS_VOICES", "voices-v1.0.bin")
 TTS_BACKEND = os.getenv("FRIDAY_TTS_BACKEND", "auto").strip().lower()
 
-if not os.path.exists(KOKORO_MODEL_PATH) and os.path.exists("tts-1-hd"):
-    KOKORO_MODEL_PATH = "tts-1-hd"
-
 _kokoro = None
 _kokoro_disabled = False
 _pygame_init = False
@@ -51,9 +48,37 @@ def clean_for_speech(text: str) -> str:
     text = re.sub(r"\$[^$\n]+?\$", "a formula", text)
     # Strip chart JSON blocks
     text = re.sub(r"```chart[\s\S]*?```", "a chart", text, flags=re.IGNORECASE)
+    # Strip strikethrough
+    text = re.sub(r"~~.*?~~", "", text)
+    # Strip colon-style emoji shortcodes  :smile: :warning:
+    text = re.sub(r":[a-zA-Z_]+:", "", text)
+    # Strip literal backslash escapes that would be spoken as "backslash n" etc.
+    text = re.sub(r"\\([nrt\"'\\])", r"\1", text)
+    text = re.sub(r"\\", "", text)
+    # Strip HTML tags
+    text = re.sub(r"<[^>]+>", "", text)
     # Strip generic code blocks
     text = re.sub(r"```[\s\S]*?```", "code block", text)
-    text = re.sub(r"`[^`]*`", "", text)
+    # Strip inline code content entirely (not just backticks)
+    text = re.sub(r"`[^`]*`", " code", text)
+    # Remove emoji and other supplementary-plane symbols
+    text = re.sub(r"[\U0001F000-\U0010FFFF]", "", text)
+    # Decode common HTML entities
+    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    text = re.sub(r"&[#a-zA-Z0-9]+;", "", text)
+    # Strip bullet/list markers
+    text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*\d+[.)]\s+", "", text, flags=re.MULTILINE)
+    # Strip task list markers
+    text = re.sub(r"- \[[ xX]\]", "", text)
+    # Remove table pipes
+    text = text.replace("|", "")
+    # Strip ASCII emoticons
+    text = re.sub(r"[:;=][)\](dpDP/\\@|]", "", text)
+    text = re.sub(r"[\(\[][:;=]", "", text)
+    # Remove arrow symbols
+    text = re.sub(r"[→←⇒⇐↔↕➡⬅]", "", text)
+    text = re.sub(r"->|=>|<-|<=", " ", text)
     text = re.sub(r"https?:\S+", "", text)
     text = re.sub(r"[*_]{1,2}", "", text)
     text = re.sub(r"\[(.*?)\]\(.*?\)", r"\1", text)

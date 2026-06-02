@@ -15,6 +15,7 @@ from collections import deque
 from typing import Any, Dict, List, Optional
 
 from .skill_base import BaseSkill, SkillRegistry, SkillResult, SkillStatus
+from ..security import permission_manager
 
 
 class SkillManager:
@@ -132,6 +133,8 @@ class SkillManager:
 
         if skill_name is None:
             result = SkillResult.invalid(f"No skill found for tool '{tool_name}'")
+        elif not permission_manager.validate([], tool_name):
+            result = SkillResult.fail(f"Permission denied for tool '{tool_name}'")
         else:
             skill  = SkillRegistry.get(skill_name)
             result = await skill.run_async(action_name, **args)
