@@ -140,7 +140,7 @@ export function useChat(
       if (res.ok) {
         const data = await res.json();
         const dbIds = data.messages.map((m: any) => m.id).filter((id: any) => typeof id === 'number');
-        const more = (data.messages || []).map((m: any, idx: number) => {
+        const more = (data.messages || []).map((m: any) => {
           let timeStr = '';
           if (m.created_at) {
             try {

@@ -51,7 +51,7 @@ export function Sidebar({
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
-  const searchTimer = useRef<ReturnType<typeof setTimeout>>();
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const handleSearch = useCallback((value: string) => {
     setSearchQuery(value);

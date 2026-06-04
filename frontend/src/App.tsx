@@ -83,6 +83,7 @@ function App() {
     fetchSessions,
     loadMoreMessages,
     hasMoreMessages,
+    isLoadingSession,
   } = useChat(handleStatusChange, hasFullAccess ? queueTTS : () => {}, { limitedMode });
 
   const handleSend = async (text: string, isVoiceMode: boolean) => {

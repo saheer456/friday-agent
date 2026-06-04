@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Copy, Check, Loader, ChevronUp } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Copy, Check, Loader } from 'lucide-react';
 import type { Message } from '../../types/api';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { PlanCard } from './PlanCard';
