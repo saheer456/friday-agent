@@ -8,6 +8,15 @@ interface UseChatOptions {
   limitedMode?: boolean;
 }
 
+function parseCreatedAt(raw?: string): string | undefined {
+  if (!raw) return undefined;
+  const normalized = raw.includes(' ') && !raw.includes('T') && !raw.includes('Z')
+    ? raw.replace(' ', 'T') + 'Z'
+    : raw;
+  const d = new Date(normalized);
+  return isNaN(d.getTime()) ? undefined : d.toISOString();
+}
+
 export function useChat(
   onStatusChange: (status: string, busy: boolean) => void,
   queueTTS: (text: string) => void,
@@ -42,8 +51,22 @@ export function useChat(
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
 
   const addSystemMessage = useCallback((text: string) => {
-    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-    setMessages(prev => [...prev, { id: Date.now().toString(), role: 'assistant', content: text, streaming: false, timestamp: timeStr }]);
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    setMessages(prev => [...prev, {
+      id: Date.now().toString(),
+      role: 'assistant',
+      content: text,
+      streaming: false,
+      timestamp: timeStr,
+      createdAt: now.toISOString(),
+    }]);
+  }, []);
+
+  const sortSessions = useCallback((list: { id: string; title: string; created_at?: string; updated_at?: string; message_count?: number }[]) => {
+    return [...list].sort((a, b) =>
+      (b.updated_at || b.created_at || '').localeCompare(a.updated_at || a.created_at || ''),
+    );
   }, []);
 
   const searchQueryRef = useRef('');
@@ -55,16 +78,30 @@ export function useChat(
       const res = await authFetch(`/api/sessions${params}`);
       if (res.ok) {
         const data = await res.json();
-        const list: { id: string; title: string; created_at?: string; updated_at?: string; message_count?: number }[] = data.sessions || [];
-        list.sort((a, b) => ((b.updated_at || b.created_at || '') > (a.updated_at || a.created_at || '') ? 1 : -1));
+        const list = sortSessions(data.sessions || []);
         setSessions(list);
         return list;
       }
+      console.error('fetchSessions failed:', res.status, await res.text());
     } catch (e) {
       console.error('Error fetching sessions:', e);
     }
     return [];
-  }, [limitedMode]);
+  }, [limitedMode, sortSessions]);
+
+  const mapDbMessage = useCallback((m: { id?: number; role: string; content: string; created_at?: string }, sessionId: string, idx: number) => {
+    const createdAt = parseCreatedAt(m.created_at);
+    const d = createdAt ? new Date(createdAt) : new Date();
+    const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    return {
+      id: typeof m.id === 'number' ? `db-${m.id}` : `m-${sessionId}-${idx}`,
+      role: m.role as Message['role'],
+      content: m.content,
+      streaming: false,
+      timestamp: timeStr,
+      createdAt: createdAt ?? d.toISOString(),
+    };
+  }, []);
 
   const selectSession = useCallback(async (sessionId: string) => {
     // Cancel any in-flight stream
@@ -75,6 +112,8 @@ export function useChat(
     firstMsgSentRef.current = false;
     if (limitedMode) return;
 
+    setMessages([]);
+    setActiveSessionFiles([]);
     setIsLoadingSession(true);
     messagesCursorRef.current = undefined;
     setHasMoreMessages(false);
@@ -84,32 +123,7 @@ export function useChat(
       const res = await authFetch(`/api/sessions/${sessionId}/messages`);
       if (res.ok) {
         const data = await res.json();
-        const mappedMessages = (data.messages || []).map((m: any, idx: number) => {
-          let timeStr = '';
-          if (m.created_at) {
-            try {
-              const dateStr = m.created_at.includes(' ') && !m.created_at.includes('T') && !m.created_at.includes('Z')
-                ? m.created_at.replace(' ', 'T') + 'Z'
-                : m.created_at;
-              const d = new Date(dateStr);
-              if (!isNaN(d.getTime())) {
-                timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-              }
-            } catch (e) {
-              console.error('Error parsing created_at:', e);
-            }
-          }
-          if (!timeStr) {
-            timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-          }
-          return {
-            id: `m-${sessionId}-${idx}`,
-            role: m.role,
-            content: m.content,
-            streaming: false,
-            timestamp: timeStr,
-          };
-        });
+        const mappedMessages = (data.messages || []).map((m: any, idx: number) => mapDbMessage(m, sessionId, idx));
         if (gen !== fetchGenRef.current) return; // stale response
         setMessages(mappedMessages.length > 0 ? mappedMessages : []);
         setActiveSessionFiles(data.files || []);
@@ -130,7 +144,7 @@ export function useChat(
       setIsLoadingSession(false);
       console.error('Error loading session messages:', e);
     }
-  }, [limitedMode]);
+  }, [limitedMode, mapDbMessage]);
 
   const loadMoreMessages = useCallback(async (sessionId: string): Promise<number> => {
     const beforeId = messagesCursorRef.current;
@@ -140,39 +154,27 @@ export function useChat(
       if (res.ok) {
         const data = await res.json();
         const dbIds = data.messages.map((m: any) => m.id).filter((id: any) => typeof id === 'number');
-        const more = (data.messages || []).map((m: any) => {
-          let timeStr = '';
-          if (m.created_at) {
-            try {
-              const d = new Date(m.created_at);
-              if (!isNaN(d.getTime())) {
-                timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-              }
-            } catch { /* ignore */ }
-          }
-          return {
-            id: `db-${m.id}`,
-            role: m.role,
-            content: m.content,
-            streaming: false,
-            timestamp: timeStr,
-          };
+        const more = (data.messages || []).map((m: any, idx: number) => mapDbMessage(m, sessionId, idx));
+        const total = data.total as number | undefined;
+        setMessages(prev => {
+          const combined = [...more, ...prev];
+          setHasMoreMessages(total != null ? combined.length < total : more.length >= 50);
+          return combined;
         });
-        setMessages(prev => [...more, ...prev]);
         messagesCursorRef.current = dbIds.length > 0 ? Math.min(...dbIds) : undefined;
-        setHasMoreMessages(dbIds.length >= 50);
         return more.length;
       }
     } catch (e) {
       console.error('Error loading more messages:', e);
     }
     return 0;
-  }, []);
+  }, [mapDbMessage]);
 
   // ── Personalized streaming greeting ──────────────────────────
   const fetchGreeting = useCallback(async () => {
     const greetingId = `greeting-${Date.now()}`;
-    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 
     // Insert a streaming bubble immediately
     setMessages([{
@@ -181,6 +183,7 @@ export function useChat(
       content: '',
       streaming: true,
       timestamp: timeStr,
+      createdAt: now.toISOString(),
       isGreeting: true,
     } as any]);
 
@@ -236,6 +239,7 @@ export function useChat(
         content: "Systems nominal, sir. What are we working on today?",
         streaming: false,
         timestamp: timeStr,
+        createdAt: now.toISOString(),
         isGreeting: true,
         suggestions: ['What is the weather today?', 'Search the web for latest AI news', 'Give me a daily briefing'],
       } as any]);
@@ -262,17 +266,17 @@ export function useChat(
             const { eventType, new: row } = payload;
 
             if (eventType === 'INSERT') {
-              setSessions(prev =>
+              setSessions(prev => sortSessions(
                 prev.some(s => s.id === row.id)
                   ? prev
-                  : [{ id: row.id, title: row.title, created_at: row.created_at, updated_at: row.updated_at, message_count: row.message_count }, ...prev]
-              );
+                  : [{ id: row.id, title: row.title, created_at: row.created_at, updated_at: row.updated_at, message_count: row.message_count }, ...prev],
+              ));
             } else if (eventType === 'UPDATE') {
-              setSessions(prev =>
+              setSessions(prev => sortSessions(
                 prev.map(s => s.id === row.id
                   ? { ...s, title: row.title, updated_at: row.updated_at, message_count: row.message_count }
-                  : s)
-              );
+                  : s),
+              ));
             } else if (eventType === 'DELETE') {
               setSessions(prev => prev.filter(s => s.id !== payload.old.id));
             }
@@ -285,31 +289,41 @@ export function useChat(
       cancelled = true;
       if (channel) supabase!.removeChannel(channel);
     };
-  }, [limitedMode]);
+  }, [limitedMode, sortSessions]);
 
   const createSession = useCallback(async (title?: string) => {
     if (limitedMode) return;
+    const sessionTitle = title || 'New Chat';
     try {
       const res = await authFetch('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: title || 'New Chat' }),
+        body: JSON.stringify({ title: sessionTitle }),
       });
       if (res.ok) {
         const data = await res.json();
-        const serverId = data.id;
-        await fetchSessions();
+        const serverId = data.id as string;
+        const now = new Date().toISOString();
+        // Optimistic update so the sidebar shows the new chat immediately
+        setSessions(prev => sortSessions([
+          { id: serverId, title: sessionTitle, created_at: now, updated_at: now, message_count: 0 },
+          ...prev.filter(s => s.id !== serverId),
+        ]));
         setActiveSessionId(serverId);
         firstMsgSentRef.current = false;
         setMessages([]);
         setActiveSessionFiles([]);
-        // Fetch personalized greeting for the fresh session
+        setHasMoreMessages(false);
+        messagesCursorRef.current = undefined;
+        await fetchSessions();
         await fetchGreeting();
+      } else {
+        console.error('createSession failed:', res.status, await res.text());
       }
     } catch (e) {
       console.error('Error creating session:', e);
     }
-  }, [limitedMode, fetchSessions, fetchGreeting]);
+  }, [limitedMode, fetchSessions, fetchGreeting, sortSessions]);
 
   const deleteSession = useCallback(async (sessionId: string) => {
     if (limitedMode) return;
@@ -353,7 +367,8 @@ export function useChat(
   }, [limitedMode]);
 
   const clearChat = useCallback(async () => {
-    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
     try {
       if (limitedMode) {
         clearLocalMemory();
@@ -368,6 +383,7 @@ export function useChat(
           : 'Session cleared, sir.\nAsk anything when ready.',
         streaming: false,
         timestamp: timeStr,
+        createdAt: now.toISOString(),
       }]);
       setPhases([]);
       setActiveSessionFiles([]);
@@ -405,12 +421,14 @@ export function useChat(
 
     const userMsgId = `u-${Date.now()}`;
     const aiMsgId   = `a-${Date.now()}`;
-    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    const createdAt = now.toISOString();
 
     setMessages(prev => [
       ...prev,
-      { id: userMsgId, role: 'user',      content: text, streaming: false, timestamp: timeStr },
-      { id: aiMsgId,   role: 'assistant', content: '',   streaming: true,  timestamp: timeStr },
+      { id: userMsgId, role: 'user',      content: text, streaming: false, timestamp: timeStr, createdAt },
+      { id: aiMsgId,   role: 'assistant', content: '',   streaming: true,  timestamp: timeStr, createdAt },
     ]);
 
     setPhases([]);

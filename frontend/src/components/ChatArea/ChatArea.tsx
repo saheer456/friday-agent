@@ -12,7 +12,7 @@ interface ChatAreaProps {
   isSpeaking: boolean;
   onDropFile?: (file: File) => void;
   onSelectSuggestion?: (text: string) => void;
-  onLoadMore?: () => void;
+  onLoadMore?: () => void | Promise<unknown>;
   hasMore?: boolean;
   isLoadingHistory?: boolean;
 }
@@ -30,10 +30,11 @@ function formatDateLabel(dateStr: string): string {
 }
 
 function shouldShowDateSeparator(curr: Message, prev?: Message): boolean {
+  if (!curr.createdAt) return false;
   if (!prev) return true;
-  const currDate = curr.timestamp ? new Date(curr.timestamp) : null;
-  const prevDate = prev.timestamp ? new Date(prev.timestamp) : null;
-  if (!currDate || !prevDate) return false;
+  const currDate = new Date(curr.createdAt);
+  const prevDate = prev.createdAt ? new Date(prev.createdAt) : null;
+  if (!prevDate || isNaN(currDate.getTime()) || isNaN(prevDate.getTime())) return false;
   return currDate.toDateString() !== prevDate.toDateString();
 }
 
@@ -66,10 +67,20 @@ export function ChatArea({
     if (!el || !onLoadMore || !hasMore || isLoadingHistory) return;
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting && !loadingMoreRef.current) {
+        if (entry.isIntersecting && !loadingMoreRef.current && chatRef.current) {
           loadingMoreRef.current = true;
-          onLoadMore();
-          setTimeout(() => { loadingMoreRef.current = false; }, 500);
+          const scrollEl = chatRef.current;
+          const prevScrollHeight = scrollEl.scrollHeight;
+          const prevScrollTop = scrollEl.scrollTop;
+          Promise.resolve(onLoadMore()).finally(() => {
+            requestAnimationFrame(() => {
+              if (chatRef.current) {
+                chatRef.current.scrollTop =
+                  chatRef.current.scrollHeight - prevScrollHeight + prevScrollTop;
+              }
+              loadingMoreRef.current = false;
+            });
+          });
         }
       },
       { rootMargin: '200px 0px' },
@@ -102,7 +113,7 @@ export function ChatArea({
   const grouped = messages.reduce<{ dateLabel: string; msgs: typeof messages }[]>((acc, m, i) => {
     const prev = i > 0 ? messages[i - 1] : undefined;
     if (shouldShowDateSeparator(m, prev)) {
-      acc.push({ dateLabel: formatDateLabel(m.timestamp || ''), msgs: [m] });
+      acc.push({ dateLabel: formatDateLabel(m.createdAt || ''), msgs: [m] });
     } else if (acc.length > 0) {
       acc[acc.length - 1].msgs.push(m);
     }
@@ -130,7 +141,12 @@ export function ChatArea({
           </div>
         )}
 
-        {messages.length === 0 && !isLoadingHistory ? (
+        {messages.length === 0 && isLoadingHistory ? (
+          <div className={styles.loadingHistory}>
+            <Loader size={20} className={styles.loadMoreSpinner} />
+            <span>Loading conversation…</span>
+          </div>
+        ) : messages.length === 0 && !isLoadingHistory ? (
           <div className={styles.welcome}>
             <div className={styles.welcomeOrb} />
             <p className={styles.welcomeLine}>Ready, sir.</p>
@@ -139,9 +155,11 @@ export function ChatArea({
         ) : (
           grouped.map((group, gi) => (
             <div key={`g-${gi}`}>
-              <div className={styles.dateSeparator}>
-                <span className={styles.dateLabel}>{group.dateLabel}</span>
-              </div>
+              {group.dateLabel && (
+                <div className={styles.dateSeparator}>
+                  <span className={styles.dateLabel}>{group.dateLabel}</span>
+                </div>
+              )}
               {group.msgs.map((m: any) => {
                 // ── PlanCard ──
                 if (m.role === 'plan') {

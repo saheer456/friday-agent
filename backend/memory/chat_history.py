@@ -75,7 +75,16 @@ async def _sq_get_sessions() -> List[Dict]:
     try:
         async with aiosqlite.connect(DB_PATH) as conn:
             conn.row_factory = aiosqlite.Row
-            async with conn.execute("SELECT id, title, created_at FROM chat_sessions ORDER BY created_at DESC") as cursor:
+            async with conn.execute("""
+                SELECT s.id, s.title, s.created_at,
+                       (SELECT COUNT(*) FROM chat_history h WHERE h.session_id = s.id) AS message_count,
+                       COALESCE(
+                         (SELECT MAX(h.created_at) FROM chat_history h WHERE h.session_id = s.id),
+                         s.created_at
+                       ) AS updated_at
+                FROM chat_sessions s
+                ORDER BY updated_at DESC
+            """) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(r) for r in rows]
     except Exception:
@@ -196,18 +205,43 @@ async def _sb_get_sessions(user_id: Optional[str] = None, search: Optional[str] 
     if sb is None:
         return []
     try:
-        query = sb.table("sessions").select("id, title, created_at, updated_at, message_count, is_archived").order("updated_at", desc=True)
+        cols = "id, title, created_at, updated_at, message_count, is_archived, user_id"
+
+        def _base_query():
+            q = sb.table("sessions").select(cols).order("updated_at", desc=True)
+            if search:
+                q = q.ilike("title", f"%{search}%")
+            if not include_archived:
+                q = q.eq("is_archived", False)
+            return q
+
         if user_id:
-            query = query.eq("user_id", user_id)
-        if search:
-            query = query.ilike("title", f"%{search}%")
-        if not include_archived:
-            query = query.eq("is_archived", False)
-        res = await query.execute()
+            owned = await _base_query().eq("user_id", user_id).execute()
+            orphans = await _base_query().eq("user_id", "").execute()
+            merged: Dict[str, Dict] = {}
+            for row in (owned.data or []) + (orphans.data or []):
+                merged[row["id"]] = row
+            return sorted(
+                merged.values(),
+                key=lambda s: s.get("updated_at") or s.get("created_at") or "",
+                reverse=True,
+            )
+
+        res = await _base_query().execute()
         return res.data or []
     except Exception as e:
         logger.error(f"Supabase get_sessions failed: {e}")
         return []
+
+
+async def _sb_claim_session(session_id: str, user_id: str) -> None:
+    sb = await _sb_get_client()
+    if sb is None:
+        return
+    try:
+        await sb.table("sessions").update({"user_id": user_id}).eq("id", session_id).eq("user_id", "").execute()
+    except Exception as e:
+        logger.error(f"Supabase claim_session failed: {e}")
 
 async def _sb_delete_session(session_id: str) -> None:
     sb = await _sb_get_client()
@@ -241,11 +275,19 @@ async def _sb_get_messages(session_id: str, limit: int = 100, before_id: Optiona
     if sb is None:
         return []
     try:
-        query = sb.table("messages").select("id, role, content, created_at").eq("session_id", session_id).order("id", asc=True).limit(limit)
+        query = (
+            sb.table("messages")
+            .select("id, role, content, created_at")
+            .eq("session_id", session_id)
+            .order("id", desc=True)
+            .limit(limit)
+        )
         if before_id is not None:
             query = query.lt("id", before_id)
         res = await query.execute()
-        return res.data or []
+        rows = res.data or []
+        rows.reverse()
+        return rows
     except Exception as e:
         logger.error(f"Supabase get_messages failed: {e}")
         return []
@@ -347,19 +389,22 @@ async def get_sessions(user_id: Optional[str] = None, search: Optional[str] = No
 async def delete_session(session_id: str) -> None:
     if _use_supabase():
         await _sb_delete_session(session_id)
-    await _sq_delete_session(session_id)
+    else:
+        await _sq_delete_session(session_id)
 
 
 async def update_session_title(session_id: str, title: str) -> None:
     if _use_supabase():
         await _sb_update_session_title(session_id, title)
-    await _sq_update_session_title(session_id, title)
+    else:
+        await _sq_update_session_title(session_id, title)
 
 
 async def save_chat_message(session_id: str, role: str, content: str) -> None:
     if _use_supabase():
         await _sb_save_message(session_id, role, content)
-    await _sq_save_message(session_id, role, content)
+    else:
+        await _sq_save_message(session_id, role, content)
 
 
 async def get_latest_chat_messages(session_id: str, limit: int = 100, before_id: Optional[int] = None) -> List[Dict]:
@@ -377,13 +422,15 @@ async def get_message_count(session_id: str) -> int:
 async def clear_chat_history(session_id: Optional[str] = None) -> None:
     if _use_supabase():
         await _sb_clear(session_id=session_id)
-    await _sq_clear(session_id=session_id)
+    else:
+        await _sq_clear(session_id=session_id)
 
 
 async def associate_file_with_session(session_id: str, filename: str) -> None:
     if _use_supabase():
         await _sb_associate_file(session_id, filename)
-    await _sq_associate_file(session_id, filename)
+    else:
+        await _sq_associate_file(session_id, filename)
 
 
 async def get_session_files(session_id: str) -> List[str]:
@@ -395,7 +442,33 @@ async def get_session_files(session_id: str) -> List[str]:
 async def remove_file_from_session(session_id: str, filename: str) -> None:
     if _use_supabase():
         await _sb_remove_file(session_id, filename)
-    await _sq_remove_file(session_id, filename)
+    else:
+        await _sq_remove_file(session_id, filename)
+
+
+async def ensure_session_access(session_id: str, user_id: Optional[str]) -> bool:
+    """Return True if the user may access this session. Claims legacy orphan sessions."""
+    if not user_id:
+        return True
+    if _use_supabase():
+        sb = await _sb_get_client()
+        if sb is None:
+            return True
+        try:
+            res = await sb.table("sessions").select("id, user_id").eq("id", session_id).limit(1).execute()
+            if not res.data:
+                return False
+            owner = (res.data[0].get("user_id") or "").strip()
+            if owner == user_id:
+                return True
+            if not owner:
+                await _sb_claim_session(session_id, user_id)
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Supabase ensure_session_access failed: {e}")
+            return False
+    return True
 
 
 async def search_sessions(query: str, user_id: Optional[str] = None) -> List[Dict]:

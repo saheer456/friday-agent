@@ -4,6 +4,7 @@ export interface Message {
   content: string;
   streaming?: boolean;
   timestamp?: string;
+  createdAt?: string;
 }
 
 export interface Phase {

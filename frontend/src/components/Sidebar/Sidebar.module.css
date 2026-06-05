@@ -110,7 +110,7 @@
 
 .sessionItem {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   padding: 12px 14px;
   border-radius: var(--radius);
@@ -148,7 +148,8 @@
   flex-grow: 1;
   min-width: 0;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 .sessionTitle {
@@ -184,6 +185,8 @@
   opacity: 0;
   transition: opacity 0.15s ease;
   margin-left: 8px;
+  flex-shrink: 0;
+  padding-top: 2px;
 }
 
 .sessionItem:hover .sessionActions,
