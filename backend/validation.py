@@ -16,11 +16,11 @@ def validate_environment():
     if not groq_key and not or_key:
         logger.error("CRITICAL: Neither GROQ_API_KEY nor OPENROUTER_API_KEY is set in the environment.")
         logger.error("Please add an API key to the .env file. The assistant cannot function without an LLM.")
-        sys.exit(1)
+        raise RuntimeError("Neither GROQ_API_KEY nor OPENROUTER_API_KEY is set in the environment.")
         
     if groq_key and "your_" in groq_key.lower():
         logger.error("CRITICAL: GROQ_API_KEY contains a placeholder ('your_'). Please provide a real key.")
-        sys.exit(1)
+        raise RuntimeError("GROQ_API_KEY contains a placeholder ('your_'). Please provide a real key.")
 
     # Check Google Workspace Credentials
     root = Path(__file__).resolve().parent.parent

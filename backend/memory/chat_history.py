@@ -447,13 +447,21 @@ async def remove_file_from_session(session_id: str, filename: str) -> None:
 
 
 async def ensure_session_access(session_id: str, user_id: Optional[str]) -> bool:
-    """Return True if the user may access this session. Claims legacy orphan sessions."""
+    """Return True if the user may access this session. Claims legacy orphan sessions.
+
+    Security improvements:
+    - If Supabase is configured but the client is unavailable, deny access by default.
+    - For SQLite backend, verify the session exists before granting access.
+    """
     if not user_id:
+        # Auth disabled or anonymous access allowed
         return True
     if _use_supabase():
         sb = await _sb_get_client()
         if sb is None:
-            return True
+            # Supabase configured but client unavailable — deny access for safety
+            logger.warning("Supabase client unavailable; denying session access for safety.")
+            return False
         try:
             res = await sb.table("sessions").select("id, user_id").eq("id", session_id).limit(1).execute()
             if not res.data:
@@ -468,7 +476,15 @@ async def ensure_session_access(session_id: str, user_id: Optional[str]) -> bool
         except Exception as e:
             logger.error(f"Supabase ensure_session_access failed: {e}")
             return False
-    return True
+    # SQLite backend: ensure session exists (do not allow access to unknown sessions)
+    try:
+        async with aiosqlite.connect(DB_PATH) as conn:
+            async with conn.execute("SELECT 1 FROM chat_sessions WHERE id = ? LIMIT 1", (session_id,)) as cursor:
+                row = await cursor.fetchone()
+                return bool(row)
+    except Exception as e:
+        logger.error(f"SQLite ensure_session_access failed: {e}")
+        return False
 
 
 async def search_sessions(query: str, user_id: Optional[str] = None) -> List[Dict]:

@@ -10,7 +10,10 @@ faulthandler.enable()
 
 import traceback
 
-print("[BOOT] server.py import started")
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("web.server")
+logger.info("[BOOT] server.py import started")
 
 import json
 import os
@@ -50,7 +53,7 @@ from slowapi.errors import RateLimitExceeded
 
 from backend import brain
 
-print("[BOOT] brain imported")
+logger.info("[BOOT] brain imported")
 
 
 def _voice_stack_info() -> dict:
@@ -262,7 +265,7 @@ app = FastAPI(title="FRIDAY Web", version="1.0", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-print("[BOOT] FastAPI app created")
+logger.info("[BOOT] FastAPI app created")
 
 # CORS: explicit origins, not wildcard (wildcard + credentials is spec-forbidden)
 _ALLOWED_ORIGINS = [
