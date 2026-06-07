@@ -1,5 +1,7 @@
 # FRIDAY — AI Voice Assistant
 
+**Version 4.1.1**
+
 <div align="center">
   <img src="https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white" />
   <img src="https://img.shields.io/badge/Groq-LLM_API-F55036?logo=groq&logoColor=white" />
