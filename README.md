@@ -1,6 +1,6 @@
 # FRIDAY — AI Voice Assistant
 
-**Version 4.2.0**
+**Version 4.3.0**
 
 <div align="center">
   <img src="https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white" />

@@ -3,7 +3,7 @@
   display: flex;
   align-items: flex-end;
   gap: 10px;
-  background: #fff;
+  background: var(--bg2);
   border: 1px solid var(--outline);
   padding: 10px 14px;
   border-radius: var(--radius);
@@ -12,7 +12,7 @@
 }
 .composer:focus-within {
   border-color: var(--primary-border);
-  box-shadow: 0 0 0 3px rgba(74,124,89,0.12), var(--shadow);
+  box-shadow: 0 0 0 3px var(--primary-dim), var(--shadow);
 }
 
 .textarea {
@@ -170,8 +170,8 @@
   color: #fff;
 }
 .send:hover:not(:disabled) {
-  background: #3d6b4a;
-  box-shadow: 0 4px 14px rgba(74,124,89,0.35);
+  background: #0284c7;
+  box-shadow: 0 4px 14px var(--primary-dim);
 }
 .send:disabled {
   opacity: 0.45;
@@ -187,8 +187,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  background: #fff;
-  border: 1px solid var(--primary-border);
+  background: var(--bg1);
+  border: 1px solid var(--outline);
   color: var(--primary);
   font-size: 0.82rem;
   font-weight: 600;

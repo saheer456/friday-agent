@@ -429,19 +429,10 @@ export function useChat(
     }
   }, [limitedMode, activeSessionId, onStatusChange]);
 
-  // On mount: restore the most recent session, or create one if none exist.
-  // Bug fix: previously always called createSession() which discarded all history on every page load.
+  // On mount: always create a fresh session for each browser load.
   useEffect(() => {
     if (!limitedMode) {
-      fetchSessions().then((existingSessions) => {
-        if (existingSessions.length > 0) {
-          // Restore the most recent session (first in DESC-ordered list)
-          selectSession(existingSessions[0].id);
-        } else {
-          // No sessions at all — create the first one
-          createSession();
-        }
-      });
+      createSession();
     }
   }, [limitedMode]); // eslint-disable-line react-hooks/exhaustive-deps
 

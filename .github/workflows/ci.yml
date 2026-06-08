@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: |
+          npm ci --silent --no-audit --no-fund
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm run build
+
+      - name: Install backend dependencies
+        run: |
+          pip install -r requirements-web.txt
+
+      - name: Syntax check server
+        run: |
+          python -m py_compile web/server.py
+
+      - name: Start server (background)
+        run: |
+          python -m uvicorn web.server:app --host 127.0.0.1 --port 8080 --log-level info &
+          sleep 4
+
+      - name: Smoke tests
+        run: |
+          set -e
+          echo "Checking /health"
+          curl -sfS http://127.0.0.1:8080/health
+          echo "Checking /api/system"
+          curl -sfS http://127.0.0.1:8080/api/system
+          echo "Checking /api/greeting (expects HTTP 200)"
+          status=$(curl -o /dev/null -s -w "%{http_code}" http://127.0.0.1:8080/api/greeting || true)
+          echo "greeting status: $status"
+          if [ "$status" -ne 200 ]; then echo "Greeting endpoint did not return 200"; exit 1; fi

@@ -147,8 +147,8 @@
 }
 
 @keyframes logo-pulse {
-  0% { transform: scale(0.9); box-shadow: 0 0 8px rgba(74, 124, 89, 0.2); }
-  100% { transform: scale(1.1); box-shadow: 0 0 24px rgba(74, 124, 89, 0.6); }
+  0% { transform: scale(0.9); box-shadow: 0 0 8px rgba(56, 189, 248, 0.2); }
+  100% { transform: scale(1.1); box-shadow: 0 0 24px rgba(56, 189, 248, 0.6); }
 }
 
 .authLoadingText {

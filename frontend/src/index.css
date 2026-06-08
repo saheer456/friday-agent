@@ -1,49 +1,54 @@
-/* ═══════════════════════════════════════════════════════════
-   Terra — Organic Design System  (DESIGN.md)
-   North Star: "Rooted Warmth"
-   ═══════════════════════════════════════════════════════════ */
 :root {
-  /* Palette */
-  --primary:     #4a7c59;  /* Forest green  — actions, nav, interactive */
-  --primary-dim: rgba(74, 124, 89, 0.18);
-  --primary-border: rgba(74, 124, 89, 0.3);
-  --bg:          #faf6f0;  /* Warm cream    — main background */
-  --bg1:         #f2ece3;  /* Slightly deeper cream for cards */
-  --bg2:         #ebe3d8;  /* Card hover / input bg */
-  --amber:       #705c30;  /* Warm amber    — highlights, badges */
-  --amber-dim:   rgba(112, 92, 48, 0.15);
-  --text:        #2e3230;  /* Deep warm charcoal */
-  --text-muted:  #6b7066;  /* Muted warm gray — always greenish undertone */
-  --outline:     rgba(46, 50, 48, 0.12);
-  --shadow:      0 4px 20px rgba(46, 50, 48, 0.06);
-  --shadow-md:   0 8px 32px rgba(46, 50, 48, 0.10);
+  /* F.R.I.D.A.Y Minimal Dark Theme */
+  --bg:          #08090a;  /* Neutral deep dark */
+  --bg1:         #111215;  /* Dark card/panel background */
+  --bg2:         #17191d;  /* Darker input/button bg */
+  --bg-card:     rgba(255, 255, 255, 0.02);
+  
+  --primary:     #38bdf8;  /* Sleek sky blue for actions */
+  --primary-dim: rgba(56, 189, 248, 0.08);
+  --primary-border: rgba(56, 189, 248, 0.2);
+  
+  --accent:      #6366f1;  /* Elegant indigo */
+  --accent-dim:  rgba(99, 102, 241, 0.08);
+  --accent-border: rgba(99, 102, 241, 0.18);
+  
+  --amber:       #e2e8f0;  /* Standard text code highlight */
+  --amber-dim:   rgba(255, 255, 255, 0.04);
+  
+  --text:        #f8fafc;  /* Clean white slate */
+  --text-muted:  #64748b;  /* Neutral slate gray */
+  --outline:     rgba(255, 255, 255, 0.07);
+  
+  --shadow:      0 4px 24px rgba(0, 0, 0, 0.4);
+  --shadow-md:   0 8px 32px rgba(0, 0, 0, 0.6);
 
-  /* Code block — warm dark, harmonized with Terra */
-  --code-bg:     #2a2520;  /* Warm charcoal, not cold blue */
-  --code-border: rgba(112, 92, 48, 0.25);
-  --code-text:   #e8dfd0;  /* Warm off-white */
-  --code-header: #1e1a16;  /* Darker header strip */
+  /* Code block */
+  --code-bg:     #0d0e12;
+  --code-border: rgba(255, 255, 255, 0.05);
+  --code-text:   #f1f5f9;
+  --code-header: #121318;
 
-  /* Callout palette */
-  --callout-note:      rgba(74, 124, 89, 0.12);
-  --callout-note-border: #4a7c59;
-  --callout-tip:       rgba(59, 130, 246, 0.1);
-  --callout-tip-border: #3b82f6;
-  --callout-warn:      rgba(245, 158, 11, 0.12);
+  /* Callout palette (Minimal versions) */
+  --callout-note:      rgba(56, 189, 248, 0.05);
+  --callout-note-border: #38bdf8;
+  --callout-tip:       rgba(99, 102, 241, 0.05);
+  --callout-tip-border: #6366f1;
+  --callout-warn:      rgba(245, 158, 11, 0.05);
   --callout-warn-border: #f59e0b;
-  --callout-caution:   rgba(239, 68, 68, 0.1);
+  --callout-caution:   rgba(239, 68, 68, 0.05);
   --callout-caution-border: #ef4444;
-  --callout-important: rgba(139, 92, 246, 0.1);
-  --callout-important-border: #8b5cf6;
+  --callout-important: rgba(59, 130, 246, 0.05);
+  --callout-important-border: #3b82f6;
 
   /* Shape */
-  --radius:      12px;
-  --radius-sm:   8px;
-  --radius-pill: 100px;
+  --radius:      10px;
+  --radius-sm:   6px;
+  --radius-pill: 9999px;
 
   /* Typography */
-  --font-head: "Literata", Georgia, serif;
-  --font-body: "Nunito Sans", system-ui, sans-serif;
+  --font-head: "Outfit", system-ui, sans-serif;
+  --font-body: "Plus Jakarta Sans", system-ui, sans-serif;
 }
 
 *,
@@ -58,8 +63,8 @@ html,
 body {
   height: 100%;
   font-family: var(--font-body);
-  font-size: 15px;
-  line-height: 1.6;
+  font-size: 14px;
+  line-height: 1.55;
   background: var(--bg);
   color: var(--text);
   overflow: hidden;
@@ -79,19 +84,8 @@ button {
   font-size: inherit;
 }
 
-/* ── Organic background texture ─────────────────────────────── */
-.bg-texture {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: -1;
-  background-image:
-    radial-gradient(ellipse 90% 60% at 20% 10%, rgba(74,124,89,0.06) 0%, transparent 60%),
-    radial-gradient(ellipse 60% 80% at 80% 90%, rgba(112,92,48,0.05) 0%, transparent 60%);
-}
-
-/* Scrollbars — warm and subtle */
-::-webkit-scrollbar { width: 6px; height: 6px; }
+/* Scrollbars - refined & minimal */
+::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--outline); border-radius: var(--radius-pill); }
-::-webkit-scrollbar-thumb:hover { background: rgba(46,50,48,0.2); }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }

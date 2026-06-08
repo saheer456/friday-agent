@@ -2,7 +2,7 @@
   width: 280px;
   min-width: 280px;
   height: 100vh;
-  background: rgba(242, 236, 227, 0.75);
+  background: var(--bg1);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border-right: 1px solid var(--outline);
@@ -80,15 +80,15 @@
   color: #fff;
   font-weight: 600;
   font-size: 0.9rem;
-  box-shadow: 0 4px 12px rgba(74, 124, 89, 0.2);
+  box-shadow: 0 4px 12px var(--primary-dim);
   transition: all 0.2s ease;
   cursor: pointer;
 }
 
 .newChatBtn:hover {
-  background: #3d684a;
+  background: #0284c7;
   transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(74, 124, 89, 0.3);
+  box-shadow: 0 6px 16px var(--primary-dim);
 }
 
 .sessionList {
@@ -115,7 +115,7 @@
   padding: 12px 14px;
   border-radius: var(--radius);
   border: 1px solid transparent;
-  background: rgba(242, 236, 227, 0.4);
+  background: rgba(255, 255, 255, 0.02);
   transition: all 0.2s ease;
   cursor: pointer;
   position: relative;
@@ -227,7 +227,7 @@
   width: 20px;
   height: 60px;
   border-radius: 0 var(--radius) var(--radius) 0;
-  background: rgba(242, 236, 227, 0.85);
+  background: var(--bg1);
   backdrop-filter: blur(10px);
   border: 1px solid var(--outline);
   border-left: none;
@@ -244,13 +244,13 @@
 .collapsedTab:hover {
   background: var(--bg2);
   width: 24px;
-  box-shadow: 0 0 12px rgba(74, 124, 89, 0.2);
+  box-shadow: 0 0 12px var(--primary-dim);
 }
 
 .filesSection {
   border-top: 1px solid var(--outline);
   padding: 18px 20px;
-  background: rgba(235, 227, 216, 0.3);
+  background: rgba(0, 0, 0, 0.12);
   max-height: 220px;
   display: flex;
   flex-direction: column;
@@ -371,7 +371,7 @@
   margin: 8px 20px 4px;
   padding: 8px 10px;
   border-radius: var(--radius);
-  background: rgba(242, 236, 227, 0.6);
+  background: rgba(255, 255, 255, 0.03);
   border: 1px solid var(--outline);
   transition: border-color 0.2s;
 }

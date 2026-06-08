@@ -31,6 +31,9 @@ function App() {
   const [loginError, setLoginError] = useState('');
   const [authNotice, setAuthNotice] = useState('');
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  // Version mismatch guard
+  const [showVersionMismatch, setShowVersionMismatch] = useState(false);
+  const frontendVersion = (import.meta.env.VITE_UI_VERSION as string) || '';
   const limitedMode = loginEnabled && isAuthenticated && !hasFullAccess;
 
   const { system, fetchSystem } = useSystem(!authLoading && (!loginEnabled || isAuthenticated));
@@ -160,6 +163,18 @@ function App() {
     return () => sub.subscription.unsubscribe();
   }, [refreshAuth]);
 
+  // Check for mismatched frontend/backend UI versions and block if necessary
+  useEffect(() => {
+    if (system && frontendVersion) {
+      const serverVersion = system.ui?.version || '';
+      if (serverVersion && serverVersion !== frontendVersion) {
+        setShowVersionMismatch(true);
+      } else {
+        setShowVersionMismatch(false);
+      }
+    }
+  }, [system, frontendVersion]);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
@@ -194,6 +209,22 @@ function App() {
         <div className={styles.authLoadingWrapper}>
           <div className={styles.authLoadingLogo}></div>
           <div className={styles.authLoadingText}>Synchronizing neural cores…</div>
+        </div>
+      </div>
+    );
+  }
+
+  // Block UI when frontend and backend UI versions mismatch to avoid state issues
+  if (showVersionMismatch && system) {
+    return (
+      <div style={{position:'fixed', inset:0, background:'#0b0b0b', color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', padding:20, zIndex:9999}}>
+        <div style={{maxWidth:700, textAlign:'center'}}>
+          <h1 style={{marginBottom:8}}>Version mismatch detected</h1>
+          <p style={{opacity:0.9}}>Frontend version <strong>{frontendVersion}</strong> differs from backend UI version <strong>{system.ui?.version}</strong>.</p>
+          <p style={{opacity:0.85}}>Please rebuild/deploy the frontend to match the backend, or reload after a deployment completes.</p>
+          <div style={{marginTop:18}}>
+            <button onClick={() => window.location.reload()} style={{padding:'8px 14px', marginRight:8}}>Reload</button>
+          </div>
         </div>
       </div>
     );

@@ -35,8 +35,8 @@
 }
 
 @keyframes orb-pulse {
-  from { box-shadow: 0 0 8px rgba(74,124,89,0.15); transform: scale(0.96); }
-  to   { box-shadow: 0 0 24px rgba(74,124,89,0.35); transform: scale(1.04); }
+  from { box-shadow: 0 0 8px rgba(56, 189, 248, 0.15); transform: scale(0.96); }
+  to   { box-shadow: 0 0 24px rgba(56, 189, 248, 0.35); transform: scale(1.04); }
 }
 
 .welcomeLine {

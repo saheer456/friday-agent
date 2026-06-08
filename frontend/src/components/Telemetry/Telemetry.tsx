@@ -58,10 +58,25 @@ export function Telemetry({ system, phases, isOpen, onClose }: TelemetryProps) {
 
         <section className={`${styles.stackCard} ${styles.statusCard}`}>
           <h3>System status</h3>
-          <StatusBadge active={rd.memory_ready} label="Memory (MiniLM)" />
-          <StatusBadge active={rd.tts_ready} label="TTS Engine" />
-          <StatusBadge active={rd.stt_ready} label="STT (Whisper)" />
+          <StatusBadge active={!!rd.memory_ready} label="Local Memory" />
+          <StatusBadge active={!!rd.tts_ready} label="TTS Engine" />
+          <StatusBadge active={!!rd.stt_ready} label="STT Engine" />
+          {rd.vector_store !== undefined && <StatusBadge active={!!rd.vector_store} label="Vector DB (Chroma)" />}
+          {rd.supabase !== undefined && <StatusBadge active={!!rd.supabase} label="Supabase Cloud" />}
         </section>
+
+        {rd.providers && Object.keys(rd.providers).length > 0 && (
+          <section className={styles.stackCard}>
+            <h3>LLM Gateway Health</h3>
+            {Object.entries(rd.providers).map(([providerName, healthy]) => (
+              <StatusBadge
+                key={providerName}
+                active={!!healthy}
+                label={providerName.toUpperCase()}
+              />
+            ))}
+          </section>
+        )}
 
         <section className={styles.stackCard}>
           <h3>Voice stack</h3>

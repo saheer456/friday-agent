@@ -41,7 +41,7 @@
 
 /* ── Cards ─── */
 .stackCard {
-  background: #fff;
+  background: var(--bg1);
   border: 1px solid var(--outline);
   border-radius: var(--radius);
   padding: 16px;

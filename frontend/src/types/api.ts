@@ -34,6 +34,9 @@ export interface SystemInfo {
     stt_ready: boolean;
     tts_ready: boolean;
     memory_ready: boolean;
+    vector_store?: boolean;
+    supabase?: boolean;
+    providers?: Record<string, boolean>;
   };
   history_turns: number;
 }

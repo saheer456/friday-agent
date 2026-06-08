@@ -11,7 +11,6 @@ faulthandler.enable()
 import traceback
 
 import logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("web.server")
 logger.info("[BOOT] server.py import started")
 
@@ -19,6 +18,7 @@ import json
 import os
 import sys
 import threading
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -37,9 +37,62 @@ _DOTENV_OVERRIDE = not _IS_DEPLOYED
 load_dotenv(ROOT / ".env", override=_DOTENV_OVERRIDE)
 load_dotenv(ROOT / "friday-agent.env", override=_DOTENV_OVERRIDE)
 
+# Structured logging and rotation
+def _setup_logging():
+    import logging.handlers
+    log_dir = ROOT / "logs"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    use_json = os.getenv('LOG_JSON', '') in {'1', 'true', 'yes', 'on'}
+    if use_json:
+        class JsonFormatter(logging.Formatter):
+            def format(self, record):
+                payload = {
+                    'timestamp': self.formatTime(record, self.datefmt),
+                    'level': record.levelname,
+                    'logger': record.name,
+                    'message': record.getMessage(),
+                }
+                if record.exc_info:
+                    payload['exc'] = self.formatException(record.exc_info)
+                try:
+                    return json.dumps(payload, ensure_ascii=False)
+                except Exception:
+                    return super().format(record)
+        formatter = JsonFormatter()
+    else:
+        formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s %(message)s')
+    try:
+        fh = logging.handlers.RotatingFileHandler(str(log_dir / 'friday.log'), maxBytes=5*1024*1024, backupCount=3, encoding='utf-8')
+        fh.setFormatter(formatter)
+        root_logger.addHandler(fh)
+    except Exception:
+        pass
+    ch = logging.StreamHandler()
+    ch.setFormatter(formatter)
+    root_logger.addHandler(ch)
+
+_setup_logging()
+# Re-get module logger after setup
+logger = logging.getLogger("web.server")
+logger.info("[BOOT] server.py import started")
+
+SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
+if SENTRY_DSN:
+    try:
+        import sentry_sdk
+        sentry_sdk.init(dsn=SENTRY_DSN, traces_sample_rate=0.1)
+        logger.info("[Sentry] initialized")
+    except Exception as e:
+        logger.warning(f"[Sentry] init failed: {e}")
+
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Security, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from typing import Optional
@@ -176,9 +229,9 @@ async def _assert_session_access(session_id: str, user: dict) -> None:
 
 
 def _ui_info() -> dict:
-    version = (os.getenv("FRIDAY_UI_VERSION") or "v4.2 Nexus").strip()
+    version = (os.getenv("FRIDAY_UI_VERSION") or "v4.3.0").strip()
     if not version:
-        version = "v4.2 Nexus"
+        version = "v4.3.0"
     return {"version": version}
 
 
@@ -266,6 +319,81 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 logger.info("[BOOT] FastAPI app created")
+
+# Per-request trace_id middleware + request logging
+@app.middleware("http")
+async def add_trace_id_middleware(request: Request, call_next):
+    trace_id = str(uuid.uuid4())
+    request.state.trace_id = trace_id
+    start = asyncio.get_event_loop().time()
+    try:
+        response = await call_next(request)
+    except Exception:
+        # Let exception handlers capture and log
+        raise
+    duration = (asyncio.get_event_loop().time() - start) * 1000.0
+    # Attach trace id header for client debugging
+    try:
+        response.headers["X-Trace-Id"] = trace_id
+    except Exception:
+        pass
+    try:
+        logger.info(json.dumps({
+            "event": "http_request",
+            "method": request.method,
+            "path": str(request.url.path),
+            "status": getattr(response, 'status_code', None),
+            "duration_ms": round(duration, 1),
+            "trace_id": trace_id,
+        }))
+    except Exception:
+        logger.info(f"HTTP {request.method} {request.url.path} status={getattr(response, 'status_code', None)} trace_id={trace_id}")
+    return response
+
+# Exception handlers: structured errors with trace IDs for easier debugging.
+def _is_api_request(request: Request) -> bool:
+    try:
+        return str(request.url.path).startswith("/api") or "application/json" in request.headers.get("accept", "")
+    except Exception:
+        return False
+
+@app.exception_handler(HTTPException)
+async def _handle_http_exception(request: Request, exc: HTTPException):
+    trace_id = getattr(request.state, 'trace_id', str(uuid.uuid4()))
+    logger.warning({"event": "http_exception", "status": exc.status_code, "detail": str(exc.detail), "trace_id": trace_id})
+    if _is_api_request(request):
+        return JSONResponse(status_code=exc.status_code, content={"error": {"code": exc.status_code, "message": str(exc.detail), "trace_id": trace_id}})
+    else:
+        # Serve a static error page if present (templates or web root)
+        err_page = ROOT / "web" / "templates" / f"error_{exc.status_code}.html"
+        if not err_page.exists():
+            err_page = ROOT / "web" / f"error_{exc.status_code}.html"
+        if err_page.exists():
+            return FileResponse(err_page, status_code=exc.status_code, media_type="text/html")
+        content = f"<html><body style='font-family:system-ui;padding:2rem;'><h1>Error {exc.status_code}</h1><p>{exc.detail}</p><hr/><small>Trace ID: {trace_id}</small></body></html>"
+        return HTMLResponse(content=content, status_code=exc.status_code)
+
+@app.exception_handler(Exception)
+async def _handle_unhandled_exception(request: Request, exc: Exception):
+    trace_id = getattr(request.state, 'trace_id', str(uuid.uuid4()))
+    logger.exception(f"Unhandled exception trace_id={trace_id}")
+    # Capture in Sentry if configured
+    try:
+        import sentry_sdk
+        sentry_sdk.set_tag('trace_id', trace_id)
+        sentry_sdk.capture_exception(exc)
+    except Exception:
+        pass
+    if _is_api_request(request):
+        return JSONResponse(status_code=500, content={"error": {"code": 500, "message": "Internal server error", "trace_id": trace_id}})
+    else:
+        err_page = ROOT / "web" / "templates" / "error_500.html"
+        if not err_page.exists():
+            err_page = ROOT / "web" / "error_500.html"
+        if err_page.exists():
+            return FileResponse(err_page, status_code=500, media_type="text/html")
+        content = f"<html><body style='font-family:system-ui;padding:2rem;'><h1>Server error</h1><p>Something went wrong while processing your request.</p><hr/><small>Trace ID: {trace_id}</small></body></html>"
+        return HTMLResponse(content=content, status_code=500)
 
 # CORS: explicit origins, not wildcard (wildcard + credentials is spec-forbidden)
 _ALLOWED_ORIGINS = [
@@ -390,7 +518,7 @@ async def auth_me(credentials: HTTPAuthorizationCredentials | None = Security(_b
 
 
 @app.get("/api/greeting")
-async def get_greeting(_auth: dict = Depends(verify_user_auth)):
+async def get_greeting(request: Request, _auth: dict = Depends(verify_user_auth)):
     from backend.brain import _load_profile
     from backend.memory import long_term
     from backend.providers import provider_manager
@@ -414,14 +542,14 @@ async def get_greeting(_auth: dict = Depends(verify_user_auth)):
         memories = await long_term.retrieve_recent_memories(limit=3)
         memory_texts = [m["content"] for m in memories if m.get("content")]
     except Exception as e:
-        print(f"[GREETING] Failed to retrieve memories: {e}")
+        logger.warning(f"[GREETING] Failed to retrieve memories: {e}")
         memory_texts = []
 
     # 3. Load user profile
     try:
         profile_text = _load_profile()
     except Exception as e:
-        print(f"[GREETING] Failed to load profile: {e}")
+        logger.warning(f"[GREETING] Failed to load profile: {e}")
         profile_text = ""
 
     # 4. Construct prompt
@@ -477,6 +605,7 @@ Output ONLY the greeting, nothing else."""
 
     # 6. Stream the LLM response
     async def event_generator():
+        trace_id = getattr(request.state, 'trace_id', str(uuid.uuid4()))
         try:
             messages = [{"role": "system", "content": prompt}]
             async for ev in provider_manager.stream(messages, is_heavy=False, temperature=0.8, max_tokens=100):
@@ -486,14 +615,14 @@ Output ONLY the greeting, nothing else."""
                         yield f"data: {json.dumps({'type': 'token', 'text': chunk}, ensure_ascii=False)}\n\n"
                 elif ev.get("type") == "error":
                     err_msg = ev.get("error", "Failed generating greeting")
-                    yield f"data: {json.dumps({'type': 'error', 'message': err_msg}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'error', 'message': err_msg, 'trace_id': trace_id}, ensure_ascii=False)}\n\n"
                     return
             
             # Send suggestions
-            yield f"data: {json.dumps({'type': 'suggestions', 'suggestions': suggestions}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'suggestions', 'suggestions': suggestions, 'trace_id': trace_id}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
-            err = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
+            err = json.dumps({"type": "error", "message": str(e), 'trace_id': trace_id}, ensure_ascii=False)
             yield f"data: {err}\n\n"
             yield "data: [DONE]\n\n"
 
@@ -595,14 +724,79 @@ async def reload_skills(_auth: dict = Depends(verify_auth)):
 
 @app.get("/api/system")
 async def system_info(_auth: dict = Depends(verify_user_auth)):
-    """Voice stack + LLM routing (HUD)."""
-    # Count total turns in default or all active session histories
+    """Voice stack + LLM routing (HUD) with active health probes."""
     history_turns = sum(len(h) for h in brain.conversation_histories.values()) if brain.conversation_histories else 0
+
+    # Active health probes with short timeouts
+    provider_health = {}
+    tts_ok = False
+    vector_ok = False
+    supabase_ok = False
+
+    try:
+        from backend.providers import provider_manager
+        try:
+            provider_health = await asyncio.wait_for(provider_manager.health_check_all(), timeout=3.0)
+        except Exception:
+            # Fallback: mark configured providers False if checks failed
+            provider_health = {name: False for name in (getattr(provider_manager, '_providers', {}) or {}).keys()}
+    except Exception:
+        provider_health = {}
+
+    try:
+        from backend.memory.semantic_memory import vector_store
+        vector_ok = bool(vector_store.is_ready())
+    except Exception:
+        vector_ok = False
+
+    try:
+        from backend.supabase_client import is_available as _sb_available
+        try:
+            supabase_ok = bool(_sb_available())
+        except Exception:
+            supabase_ok = False
+    except Exception:
+        supabase_ok = False
+
+    # TTS quick check
+    try:
+        from backend.tts import TTS_BACKEND, KOKORO_MODEL_PATH, KOKORO_VOICES_PATH, synthesize
+        backend_pref = (TTS_BACKEND or "auto").strip().lower()
+        if backend_pref == "kokoro":
+            tts_ok = os.path.exists(KOKORO_MODEL_PATH) and os.path.exists(KOKORO_VOICES_PATH)
+        elif backend_pref == "edge":
+            try:
+                audio, suf, echo = await asyncio.wait_for(synthesize("Ping"), timeout=4.0)
+                tts_ok = bool(audio)
+            except Exception:
+                tts_ok = False
+        else:  # auto
+            if os.path.exists(KOKORO_MODEL_PATH) and os.path.exists(KOKORO_VOICES_PATH):
+                tts_ok = True
+            else:
+                try:
+                    audio, suf, echo = await asyncio.wait_for(synthesize("Ping"), timeout=4.0)
+                    tts_ok = bool(audio)
+                except Exception:
+                    tts_ok = False
+    except Exception:
+        tts_ok = False
+
+    # Compose readiness
+    readiness = {
+        "memory_ready": _memory_ready,
+        "tts_ready": _tts_ready.is_set() or tts_ok,
+        "stt_ready": _stt_ready,
+        "vector_store": vector_ok,
+        "supabase": supabase_ok,
+        "providers": provider_health,
+    }
+
     return {
         "ui": _ui_info(),
         "voice": _voice_stack_info(),
         "llm": _llm_stack_info(),
-        "readiness": _readiness_info(),
+        "readiness": readiness,
         "history_turns": history_turns,
     }
 
@@ -625,16 +819,20 @@ async def chat_stream(request: Request, body: ChatBody, _auth: dict = Depends(ve
         return raw
 
     async def event_gen():
+        trace_id = getattr(request.state, 'trace_id', str(uuid.uuid4()))
         try:
             async for ev in brain.iter_chat_sse_events(body.message.strip(), session_id=body.session_id, voice_mode=body.voice_mode):
                 if ev.get("type") == "error" and "message" in ev:
                     ev["message"] = _friendly_error(ev["message"])
+                # Attach trace id for debugging
+                if isinstance(ev, dict):
+                    ev["trace_id"] = trace_id
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
             err_msg = _friendly_error(str(e))
-            err = json.dumps({"type": "error", "message": err_msg}, ensure_ascii=False)
-            yield f"data: {err}\n\n"
+            err = {"type": "error", "message": err_msg, "trace_id": trace_id}
+            yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_gen(),
@@ -648,17 +846,18 @@ async def chat_stream(request: Request, body: ChatBody, _auth: dict = Depends(ve
 
 
 @app.post("/api/chat/limited/stream")
-async def limited_chat_stream(body: LimitedChatBody, _auth: dict = Depends(verify_user_auth)):
+async def limited_chat_stream(request: Request, body: LimitedChatBody, _auth: dict = Depends(verify_user_auth)):
     """Limited demo chat: no backend memory, no powerful tools, browser context only."""
     from backend import tools_utils
     from backend.providers import provider_manager
 
     async def event_gen():
+        trace_id = getattr(request.state, 'trace_id', str(uuid.uuid4()))
         try:
             msg = body.message.strip()
             lowered = msg.lower()
             if any(word in lowered for word in ["weather", "temperature", "forecast"]):
-                yield f"data: {json.dumps({'type': 'phase', 'id': 'weather', 'title': 'Weather', 'detail': 'Checking conditions'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'phase', 'id': 'weather', 'title': 'Weather', 'detail': 'Checking conditions', 'trace_id': trace_id}, ensure_ascii=False)}\n\n"
                 location = None
                 try:
                     extract_prompt = [
@@ -671,13 +870,13 @@ async def limited_chat_stream(body: LimitedChatBody, _auth: dict = Depends(verif
                         if extracted and extracted.upper() != "DEFAULT":
                             location = extracted
                 except Exception as e:
-                    print(f"[ERROR] Location extraction failed: {e}")
+                    logger.warning(f"[ERROR] Location extraction failed: {e}")
 
                 weather = await tools_utils.get_weather(location=location)
                 text = weather.get("summary") if isinstance(weather, dict) else None
                 if not text:
                     text = "Weather is unavailable right now."
-                yield f"data: {json.dumps({'type': 'token', 'text': text}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'token', 'text': text, 'trace_id': trace_id}, ensure_ascii=False)}\n\n"
                 yield "data: [DONE]\n\n"
                 return
 
@@ -694,15 +893,17 @@ async def limited_chat_stream(body: LimitedChatBody, _auth: dict = Depends(verif
                 {"role": "system", "content": system},
                 {"role": "user", "content": msg},
             ]
-            yield f"data: {json.dumps({'type': 'phase', 'id': 'limited', 'title': 'Limited chat', 'detail': 'Using browser-local context'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'phase', 'id': 'limited', 'title': 'Limited chat', 'detail': 'Using browser-local context', 'trace_id': trace_id}, ensure_ascii=False)}\n\n"
             async for ev in provider_manager.stream(messages, tools=[], is_heavy=False, voice_mode=False):
                 if ev.get("type") == "text":
-                    yield f"data: {json.dumps({'type': 'token', 'text': ev.get('text', '')}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'token', 'text': ev.get('text', ''), 'trace_id': trace_id}, ensure_ascii=False)}\n\n"
+
                 elif ev.get("type") == "error":
-                    yield f"data: {json.dumps({'type': 'error', 'message': ev.get('error', 'Limited chat failed')}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'error', 'message': ev.get('error', 'Limited chat failed'), 'trace_id': trace_id}, ensure_ascii=False)}\n\n"
+
             yield "data: [DONE]\n\n"
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'trace_id': trace_id}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -714,7 +915,6 @@ async def limited_chat_stream(body: LimitedChatBody, _auth: dict = Depends(verif
             "X-Accel-Buffering": "no",
         },
     )
-
 
 @app.post("/api/upload")
 @limiter.limit("20/minute")

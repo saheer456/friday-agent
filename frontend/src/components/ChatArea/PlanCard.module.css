@@ -9,7 +9,7 @@
 
 .active {
   border-color: var(--primary-border);
-  box-shadow: 0 0 0 2px rgba(74, 124, 89, 0.07);
+  box-shadow: 0 0 0 2px var(--primary-dim);
 }
 
 .done {
@@ -54,7 +54,7 @@
   font-weight: 700;
   padding: 2px 7px;
   border-radius: var(--radius-pill);
-  background: rgba(74, 124, 89, 0.12);
+  background: var(--primary-dim);
   color: var(--primary);
   border: 1px solid var(--primary-border);
   animation: pulse-pill 1.4s ease-in-out infinite alternate;
@@ -113,7 +113,7 @@
 .stepDone .stepTitle {
   color: var(--text-muted);
   text-decoration: line-through;
-  text-decoration-color: rgba(74, 124, 89, 0.4);
+  text-decoration-color: rgba(56, 189, 248, 0.4);
 }
 
 .stepIcon { flex-shrink: 0; margin-top: 2px; }
