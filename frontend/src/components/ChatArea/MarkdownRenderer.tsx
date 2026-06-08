@@ -107,6 +107,74 @@ function CodeBlock({ lang, code, blockKey }: CodeBlockProps) {
 // ─────────────────────────────────────────────────────────────────────────────
 // MermaidBlock sub-component
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// MermaidBlock sub-component
+// ─────────────────────────────────────────────────────────────────────────────
+function autoFixMermaid(code: string): string {
+  let lines = code.split('\n');
+  lines = lines.map(line => {
+    // Stadium: id([label])
+    line = line.replace(/([a-zA-Z0-9_-]+)\s*\(\[\s*([^"]+?)\s*\]\)/g, (match, id, label) => {
+      if (label.includes('(') || label.includes(')') || label.includes('[') || label.includes(']') || label.includes(':') || label.includes('-') || label.includes('/') || label.includes('\\') || label.includes('&') || label.includes('%')) {
+        return `${id}(["${label.replace(/"/g, '\\"')}"])`;
+      }
+      return match;
+    });
+    // Subroutine: id[[label]]
+    line = line.replace(/([a-zA-Z0-9_-]+)\s*\[\[\s*([^"]+?)\s*\]\]/g, (match, id, label) => {
+      if (label.includes('(') || label.includes(')') || label.includes('[') || label.includes(']') || label.includes(':') || label.includes('-') || label.includes('/') || label.includes('\\') || label.includes('&') || label.includes('%')) {
+        return `${id}[["${label.replace(/"/g, '\\"')}"]]`;
+      }
+      return match;
+    });
+    // Circle: id((label))
+    line = line.replace(/([a-zA-Z0-9_-]+)\s*\(\(\s*([^"]+?)\s*\)\)/g, (match, id, label) => {
+      if (label.includes('(') || label.includes(')') || label.includes('[') || label.includes(']') || label.includes(':') || label.includes('-') || label.includes('/') || label.includes('\\') || label.includes('&') || label.includes('%')) {
+        return `${id}(("${label.replace(/"/g, '\\"')}"))`;
+      }
+      return match;
+    });
+    // Hexagon: id{{label}}
+    line = line.replace(/([a-zA-Z0-9_-]+)\s*\{\{\s*([^"]+?)\s*\}\}/g, (match, id, label) => {
+      if (label.includes('(') || label.includes(')') || label.includes('[') || label.includes(']') || label.includes(':') || label.includes('-') || label.includes('/') || label.includes('\\') || label.includes('&') || label.includes('%')) {
+        return `${id}{{"${label.replace(/"/g, '\\"')}"}}`;
+      }
+      return match;
+    });
+    // Parallelogram / Trapezoids
+    line = line.replace(/([a-zA-Z0-9_-]+)\s*\[([\/\\])\s*([^"]+?)\s*([\/\\])\]/g, (match, id, slash1, label, slash2) => {
+      if (label.includes('(') || label.includes(')') || label.includes('[') || label.includes(']') || label.includes(':') || label.includes('-') || label.includes('/') || label.includes('\\') || label.includes('&') || label.includes('%')) {
+        return `${id}[${slash1}"${label.replace(/"/g, '\\"')}"${slash2}]`;
+      }
+      return match;
+    });
+    // Basic Square: id[label]
+    line = line.replace(/([a-zA-Z0-9_-]+)\s*\[\s*([^"\[\]]+?)\s*\]/g, (match, id, label) => {
+      if (label.includes('(') || label.includes(')') || label.includes(':') || label.includes('-') || label.includes('/') || label.includes('\\') || label.includes('&') || label.includes('%') || label.includes('.') || label.includes(' ')) {
+        return `${id}["${label.replace(/"/g, '\\"')}"]`;
+      }
+      return match;
+    });
+    // Basic Round: id(label)
+    line = line.replace(/([a-zA-Z0-9_-]+)\s*\(\s*([^"\(\)]+?)\s*\)/g, (match, id, label) => {
+      if (label.includes('[') || label.includes(']') || label.includes(':') || label.includes('-') || label.includes('/') || label.includes('\\') || label.includes('&') || label.includes('%') || label.includes('.') || label.includes(' ')) {
+        return `${id}("${label.replace(/"/g, '\\"')}")`;
+      }
+      return match;
+    });
+    // Basic Rhombus: id{label}
+    line = line.replace(/([a-zA-Z0-9_-]+)\s*\{\s*([^"\{\}]+?)\s*\}/g, (match, id, label) => {
+      if (label.includes('(') || label.includes(')') || label.includes('[') || label.includes(']') || label.includes(':') || label.includes('-') || label.includes('/') || label.includes('\\') || label.includes('&') || label.includes('%') || label.includes('.') || label.includes(' ')) {
+        return `${id}{"${label.replace(/"/g, '\\"').replace(/\{/g, '').replace(/\}/g, '')}"}`;
+      }
+      return match;
+    });
+
+    return line;
+  });
+  return lines.join('\n');
+}
+
 function MermaidBlock({ code, id }: { code: string; id: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const [error, setError] = useState('');
@@ -116,12 +184,23 @@ function MermaidBlock({ code, id }: { code: string; id: string }) {
     const el = ref.current;
     el.innerHTML = '';
     setError('');
-    mermaidApi.render(`mermaid-${id}`, code)
+    const fixedCode = autoFixMermaid(code);
+    mermaidApi.render(`mermaid-${id}`, fixedCode)
       .then(({ svg }) => { if (ref.current) ref.current.innerHTML = svg; })
       .catch((e: Error) => setError(e.message || 'Diagram error'));
   }, [code, id]);
 
-  if (error) return <div className={mdStyles.callout} style={{ borderLeftColor: 'var(--callout-caution-border)', background: 'var(--callout-caution)' }}>⚠️ Mermaid: {error}</div>;
+  if (error) {
+    return (
+      <div className={mdStyles.callout} style={{ borderLeftColor: 'var(--callout-caution-border)', background: 'var(--callout-caution)', padding: '12px' }}>
+        <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>⚠️ Mermaid Render Error: {error}</div>
+        <details>
+          <summary style={{ cursor: 'pointer', fontSize: '13px', opacity: 0.8 }}>Show original diagram code</summary>
+          <pre style={{ marginTop: '8px', fontSize: '12px', background: 'rgba(0,0,0,0.05)', padding: '8px', borderRadius: '4px', overflowX: 'auto', whiteSpace: 'pre-wrap' }}>{code}</pre>
+        </details>
+      </div>
+    );
+  }
   return <div ref={ref} className={mdStyles.mermaidWrap} />;
 }
 

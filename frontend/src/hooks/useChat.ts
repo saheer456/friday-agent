@@ -17,6 +17,41 @@ function parseCreatedAt(raw?: string): string | undefined {
   return isNaN(d.getTime()) ? undefined : d.toISOString();
 }
 
+function isSpeakable(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+
+  // Skip code fences
+  if (trimmed.startsWith('```') || trimmed.endsWith('```')) return false;
+
+  // Skip lines that look like markdown table rows/dividers
+  if (trimmed.includes('|') && (trimmed.includes('---') || trimmed.includes('-|-'))) return false;
+
+  // Skip JSON blocks or chunks that look like JSON objects/arrays
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) return false;
+  if (/["'][a-zA-Z0-9_-]+["']\s*:/i.test(trimmed)) return false; // JSON key-value
+
+  // Skip common coding declarations
+  if (/^(import|const|let|var|function|class|def|return|from|public|private|async|await)\s/i.test(trimmed)) return false;
+
+  // Skip common Mermaid syntax
+  if (/^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|gitGraph)\b/i.test(trimmed)) return false;
+  if (trimmed.includes('-->') || trimmed.includes('---') || trimmed.includes('==>')) return false;
+
+  // Calculate letters/numbers ratio to filter out symbol-heavy text (code/data/config)
+  const letters = trimmed.replace(/[^a-zA-Z0-9]/g, '').length;
+  if (letters === 0) return false;
+  if (trimmed.length > 10 && letters / trimmed.length < 0.4) return false;
+
+  // Filter out short fragments that don't have enough words
+  const words = trimmed.split(/\s+/).filter(w => w.length > 0);
+  if (words.length < 2) {
+    if (!/^[a-zA-Z]{2,15}$/.test(trimmed)) return false;
+  }
+
+  return true;
+}
+
 export function useChat(
   onStatusChange: (status: string, busy: boolean) => void,
   queueTTS: (text: string) => void,
@@ -506,7 +541,7 @@ export function useChat(
             }
             if (finalText.trim() && !limitedMode) {
               const leftover = ttsSentence.trim();
-              if (leftover) queueTTS(leftover);
+              if (leftover && isSpeakable(leftover)) queueTTS(leftover);
             }
             break outer;
           }
@@ -543,7 +578,7 @@ export function useChat(
                 } else {
                   // Send any leftover sentence buffer not yet spoken
                   const leftover = ttsSentence.trim();
-                  if (leftover) queueTTS(leftover);
+                  if (leftover && isSpeakable(leftover)) queueTTS(leftover);
                 }
               }
               break outer;
@@ -624,8 +659,8 @@ export function useChat(
                 const sentBoundary = ttsSentence.match(/^([\s\S]+?[.!?\n])(\s|$)/);
                 if (sentBoundary && ttsSentence.length >= 20) {
                   const sentenceToSpeak = sentBoundary[1].trim();
-                  if (sentenceToSpeak.length >= 3) {
-                    ttsSentence = ttsSentence.slice(sentBoundary[0].length);
+                  ttsSentence = ttsSentence.slice(sentBoundary[0].length);
+                  if (sentenceToSpeak.length >= 3 && isSpeakable(sentenceToSpeak)) {
                     queueTTS(sentenceToSpeak);
                   }
                 }

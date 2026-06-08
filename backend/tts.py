@@ -52,6 +52,9 @@ def clean_for_speech(text: str) -> str:
     text = re.sub(r"~~.*?~~", "", text)
     # Strip colon-style emoji shortcodes  :smile: :warning:
     text = re.sub(r":[a-zA-Z_]+:", "", text)
+    # Strip JSON objects
+    text = re.sub(r"\{[^{}]*?\"[a-zA-Z0-9_-]+\"\s*:\s*[\s\S]*?\}", "", text)
+    text = re.sub(r"\{[\s\S]*?\}", "", text)
     # Strip literal backslash escapes that would be spoken as "backslash n" etc.
     text = re.sub(r"\\([nrt\"'\\])", r"\1", text)
     text = re.sub(r"\\", "", text)
@@ -59,6 +62,9 @@ def clean_for_speech(text: str) -> str:
     text = re.sub(r"<[^>]+>", "", text)
     # Strip generic code blocks
     text = re.sub(r"```[\s\S]*?```", "code block", text)
+    # Strip open/partial code fences that aren't closed
+    text = re.sub(r"```[a-zA-Z-]*\n[\s\S]*", "", text)
+    text = re.sub(r"```[a-zA-Z-]*\s*$", "", text, flags=re.MULTILINE)
     # Strip inline code content entirely (not just backticks)
     text = re.sub(r"`[^`]*`", " code", text)
     # Remove emoji and other supplementary-plane symbols

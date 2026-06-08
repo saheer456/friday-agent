@@ -513,4 +513,28 @@ async def test_session_ownership_denied_for_other_user():
 
 ---
 
+## 10. Summary of Fixes: Tool Calling, Mermaid, TTS Streaming, & Callouts (2026-06-08)
+
+To address issues with tool execution, invalid Mermaid diagrams, speech-synthesis leakages, and system prompt noise, the following target improvements were implemented:
+
+### 10.1. Tool Calling Robustness & Lockouts
+- **Empty Tool ID Fallback**: In [brain.py](file:///c:/friday/backend/brain.py), when streaming tool call indices lack an explicit `id` from the model/provider, a stable, unique ID is dynamically generated: `tc["id"] = f"call_{idx}_{round_num}_{int(time.monotonic())}"`. This guarantees matches between the assistant's message and the tool messages, satisfying strict API constraints.
+- **Robust Argument Parsing**: In [tool_bridge.py](file:///c:/friday/backend/tool_bridge.py), JSON decoding failures in tool arguments are now caught gracefully. Instead of silently failing or using empty dicts, the bridge logs a warning and returns a structured `SkillResult.invalid` response exposing the raw input argument string.
+- **Payload Fallback Preservation**: In [tool_bridge.py](file:///c:/friday/backend/tool_bridge.py), `get_tools_payload()` keyword-based matching is made resilient. Standard core capabilities (code, terminal) are always exposed, and if no category matches, the full schema list is returned to prevent LLM lockout.
+
+### 10.2. Mermaid Render Resilience & Auto-Fixing
+- **Prompt Enforced Quoting**: Instructed the LLM in the [brain.py](file:///c:/friday/backend/brain.py) system prompt to always quote node labels containing special characters (e.g. parenthetical details, hyphens, slashes).
+- **Client-Side Auto-Fixing**: Added `autoFixMermaid(code)` inside [MarkdownRenderer.tsx](file:///c:/friday/frontend/src/components/ChatArea/MarkdownRenderer.tsx) to automatically detect unquoted labels with parentheses/brackets/colons and wrap them in quotes before sending them to the Mermaid API.
+- **Graceful Fallback**: Modified the rendering component. If rendering fails, it falls back to a clean collapsible view displaying the raw diagram code instead of throwing console crashes or rendering blank blocks.
+
+### 10.3. Preventing TTS Streaming Leakages
+- **Frontend Sentence Filtering**: Added `isSpeakable(text)` in [useChat.ts](file:///c:/friday/frontend/src/hooks/useChat.ts) to filter sentence buffers before they are sent to the speech queue. This blocks JSON payloads (e.g., tool arguments or responses), raw code structures, and Mermaid syntax chunks.
+- **Markdown Stripping Enhancements**: Updated `stripMarkdown()` in [useVoice.ts](file:///c:/friday/frontend/src/hooks/useVoice.ts) to strip unclosed code fences, Mermaid diagram blocks, SVG chart tags, and raw JSON-like brackets from the speech stream.
+- **Backend Clean-up Safeguards**: Enhanced `clean_for_speech()` in [tts.py](file:///c:/friday/backend/tts.py) to strip JSON structures and unclosed code fence chunks using regex patterns.
+
+### 10.4. NOTE / Callout Noise Reduction
+- **Prompt Refinement**: Completely removed instructions from [brain.py](file:///c:/friday/backend/brain.py) that encouraged the LLM to output `> [!NOTE]` style GFM callouts for regular conversational text, eliminating chatbot chatter and unnecessary blockquote boxes.
+
+---
+
 *Generated from code audit on branch `main`. Restore `web/server.py` before any production deploy.*

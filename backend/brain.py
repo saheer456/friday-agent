@@ -211,12 +211,10 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
             system_content += (
                 "\n\nOUTPUT CHANNEL: WEB CHAT. Format responses with rich Markdown:\n"
                 "- Use **markdown tables** for any comparison, schedule, feature matrix, or structured data.\n"
-                "- Use GFM callouts for emphasis: `> [!NOTE]`, `> [!TIP]`, `> [!WARNING]`, `> [!CAUTION]`, `> [!IMPORTANT]`.\n"
-                "- Use **mermaid** fenced code blocks (```mermaid) for flowcharts, sequence diagrams, or architecture.\n"
+                "- Use **mermaid** fenced code blocks (```mermaid) for flowcharts, sequence diagrams, or architecture. Always quote node labels containing parentheses, brackets, colons, hyphens, slashes, or other special characters (e.g. A[\"Build (CI)\"] --> B[\"Test\"]).\n"
                 "- Use **chart** fenced code blocks (```chart) for data visualization. Format as JSON:\n"
                 "  {\"type\":\"bar\",\"title\":\"...\",\"labels\":[...],\"datasets\":[{\"label\":\"...\",\"data\":[...]}]}\n"
                 "  Supported types: bar, line, pie, scatter.\n"
-                "- Use `> [!NOTE]` style callouts, NOT plain blockquotes, for notes and warnings.\n"
                 "- Use syntax-highlighted code blocks with the language name (```python, ```js, etc.).\n"
                 "- Use ordered/unordered lists and headers freely.\n"
                 "- NEVER output raw URLs. NEVER use the '**Term**: description' pattern.\n"
@@ -399,6 +397,10 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
                 break
 
             if tool_calls_accumulator:
+                # Ensure all tool calls have a valid non-empty ID to prevent API errors or empty tool_call_id mismatches
+                for idx, tc in tool_calls_accumulator.items():
+                    if not tc.get("id"):
+                        tc["id"] = f"call_{idx}_{round_num}_{int(time.monotonic())}"
                 tool_calls = list(tool_calls_accumulator.values())
                 logger.debug(
                     "[Turn] tool_calls_detected session=%s count=%d names=%s",

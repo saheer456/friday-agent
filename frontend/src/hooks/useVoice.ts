@@ -15,8 +15,14 @@ declare global {
 /** Strip markdown and special syntax before TTS chunking on the frontend. */
 function stripMarkdown(text: string): string {
   return text
+    .replace(/```[a-zA-Z-]*\n[\s\S]*/g, '')  // strip open/unclosed code blocks
+    .replace(/```[a-zA-Z-]*\s*$/g, '')       // strip trailing code block fence
+    .replace(/```mermaid[\s\S]*?```/gi, '')  // mermaid blocks
+    .replace(/```chart[\s\S]*?```/gi, '')    // chart blocks
     .replace(/```[\s\S]*?```/g, '')          // code blocks
     .replace(/`[^`]*`/g, ' code ')            // inline code
+    .replace(/\{[^{}]*?"[a-zA-Z0-9_-]+"\s*:\s*[\s\S]*?\}/g, '') // strip JSON-like key-value structures
+    .replace(/\{[\s\S]*?\}/g, '')            // strip other JSON-like contents
     .replace(/\$\$[\s\S]+?\$\$/g, 'an equation')  // LaTeX block
     .replace(/\$[^$\n]+?\$/g, 'a formula')    // LaTeX inline
     .replace(/^#{1,6}\s+/gm, '')              // headings

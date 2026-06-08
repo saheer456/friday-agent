@@ -135,37 +135,50 @@ def get_tools_payload(user_message: Optional[str] = None) -> Optional[List[Dict]
         return False
 
     if not matched_prefixes:
-        # Core categories fallback
-        core_categories = {"code", "terminal", "weather", "web_search", "app_launcher"}
-        return [t for t in schemas if tool_matches(t["function"]["name"], core_categories)]
+        # Fallback: if no keywords matched, provide ALL schemas so the LLM has full capabilities
+        return schemas
 
-    filtered = [t for t in schemas if tool_matches(t["function"]["name"], matched_prefixes)]
+    # If keywords matched, always include core tools (code, terminal) as they are universally useful,
+    # along with the matched prefixes.
+    always_include = {"code", "terminal"}
+    active_categories = matched_prefixes.union(always_include)
+    filtered = [t for t in schemas if tool_matches(t["function"]["name"], active_categories)]
     return filtered if filtered else schemas
 
 
 def handle_tool_call(tool_name: str, tool_args_json: str) -> str:
     try:
-        args = json.loads(tool_args_json) if tool_args_json else {}
-    except json.JSONDecodeError:
-        args = {}
+        args = json.loads(tool_args_json) if tool_args_json and tool_args_json.strip() else {}
+    except json.JSONDecodeError as jde:
+        logger.warning("Failed to parse tool arguments JSON for %s: '%s' error: %s", tool_name, tool_args_json, jde)
+        from .skills.skill_base import SkillResult
+        return SkillResult.invalid(
+            f"Invalid JSON in tool call arguments: {jde}. Raw arguments: {tool_args_json}"
+        ).to_tool_message()
 
     try:
         result = skill_manager.dispatch(tool_name, args)
         return result.to_tool_message()
     except Exception as e:
         logger.error("Tool execution failed for %s: %s", tool_name, e)
-        return f"Error executing tool {tool_name}: {e}"
+        from .skills.skill_base import SkillResult
+        return SkillResult.fail(f"Error executing tool {tool_name}: {e}").to_tool_message()
 
 
 async def handle_tool_call_async(tool_name: str, tool_args_json: str) -> str:
     try:
-        args = json.loads(tool_args_json) if tool_args_json else {}
-    except json.JSONDecodeError:
-        args = {}
+        args = json.loads(tool_args_json) if tool_args_json and tool_args_json.strip() else {}
+    except json.JSONDecodeError as jde:
+        logger.warning("Failed to parse tool arguments JSON for %s: '%s' error: %s", tool_name, tool_args_json, jde)
+        from .skills.skill_base import SkillResult
+        return SkillResult.invalid(
+            f"Invalid JSON in tool call arguments: {jde}. Raw arguments: {tool_args_json}"
+        ).to_tool_message()
 
     try:
         result = await skill_manager.dispatch_async(tool_name, args)
         return result.to_tool_message()
     except Exception as e:
         logger.error("Tool execution failed for %s: %s", tool_name, e)
-        return f"Error executing tool {tool_name}: {e}"
+        from .skills.skill_base import SkillResult
+        return SkillResult.fail(f"Error executing tool {tool_name}: {e}").to_tool_message()
