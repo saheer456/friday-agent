@@ -538,3 +538,41 @@ To address issues with tool execution, invalid Mermaid diagrams, speech-synthesi
 ---
 
 *Generated from code audit on branch `main`. Restore `web/server.py` before any production deploy.*
+
+---
+
+## 11. Summary of Fixes: Complete Skills Framework Audit & Enhancements (2026-06-08)
+
+Following a comprehensive code audit of all 14 backend skills and tools infrastructure layer, the following architectural and feature updates were implemented:
+
+### 11.1. Infrastructure Security & Robustness
+- **Permissions and Parameter Validation**: Modified `@skill_action` in [skill_base.py](file:///c:/friday/backend/skills/skill_base.py) to accept optional `permissions` lists. [skill_base.py](file:///c:/friday/backend/skills/skill_base.py) now performs dynamic, strict type-checking and required-parameter validation on all inbound args before executing any action, returning a structured `invalid_params` status if constraints are violated.
+- **Ambiguity-free Tool Dispatch**: Enhanced [skill_manager.py](file:///c:/friday/backend/skills/skill_manager.py) to sort registered skill prefixes by length in descending order, ensuring longest-prefix-first matching to resolve naming conflicts (e.g., `web_search_search_web` matches `web_search` instead of `web`).
+- **Unified Permission Validation**: Unified the execution paths in [skill_manager.py](file:///c:/friday/backend/skills/skill_manager.py) to validate actual action permissions retrieved from `@skill_action` decorators via the central `permission_manager.validate()`, resolving a critical security issue where empty permissions caused tool lockout in safe mode.
+- **Thread-safe Skill Registry**: Wrapped `SkillRegistry` writes/reads in a `threading.Lock` to guarantee safety during concurrent skill registration at server startup.
+- **Skill Health Checks**: Introduced a standard `health_check()` method to the `BaseSkill` class.
+
+### 11.2. Cleanup & Deprecation of Duplicate Code
+- **Trimmed `tools_utils.py`**: Trimmed [tools_utils.py](file:///c:/friday/backend/tools_utils.py) down, deleting all duplicate standalone functions (`send_email`, `add_calendar_event`, `read_clipboard`, `take_screenshot`, `open_app`, etc.). Only common shared helpers like `geocode_location`, `CITY_ALIASES`, `get_profile_location`, and `get_weather` are retained.
+- **Daily Briefing Skill**: Created a new [daily_briefing_skill.py](file:///c:/friday/backend/skills/daily_briefing_skill.py) containing `list_tasks` (scans conversations for pending tasks) and `get_briefing` (combines weather and task items) as a registered skill.
+
+### 11.3. Safety & Sandbox Enhancements
+- **Restricted Code execution**: Scrubbed environment variables (removing credentials, API keys) in [code_skill.py](file:///c:/friday/backend/skills/code_skill.py) before launching python execution subprocesses. Added `cwd` support and self-healing missing package installation (`ModuleNotFoundError` triggers automatic `pip install`).
+- **Secure File/Command Execution**: Switched containment checking in [terminal_skill.py](file:///c:/friday/backend/skills/terminal_skill.py) to use `Path.is_relative_to(workspace)` instead of string starts-with matching, fully blocking path-traversal bypasses.
+- **Dedicated File Operations**: Added explicit actions in [terminal_skill.py](file:///c:/friday/backend/skills/terminal_skill.py) for `copy_file`, `move_file`, `delete_file`, and `search_files` to prevent the LLM from executing raw, risky shell commands.
+
+### 11.4. Per-Skill Enhancements
+- **app_launcher**: Added dynamic command path resolution (`shutil.which`) and `close_application(target)` action using `taskkill` (Windows) or `pkill` (UNIX).
+- **clipboard**: Added `write_clipboard(text)` action, image clipboard capture using Pillow, and truncation flags.
+- **weather**: Added dynamic timezone support, hourly forecasts, and air quality indexes.
+- **web_search**: Added `search_news` and `search_images` actions, fully async searching (`AsyncDDGS`), and Wikipedia API lookup fallback if DuckDuckGo fails.
+- **web_scrape**: Added PDF parsing fallback (utilizing `pypdf` or `PyPDF2`), cache with TTL, and rotatable User-Agent pool.
+- **youtube**: Added fully async transcript ingestion, video metadata fetching via oEmbed, and image search.
+- **screenshot**: Added standard vision API config integration, and image resizing (downscaling to 1280px, saving as JPEG) to minimize token latency.
+- **Google Workspace Skills**:
+  - Optional browser auto-opening (`open_browser` parameter) on calendar/document/sheet updates.
+  - **gmail**: Added `read_email`, `search_email`, `reply_to_email` (thread-safe headers linking), and HTML body support.
+  - **gcalendar**: Added `update_event`, `find_free_time` slots detection, timezone auto-lookup, and timezone-naive fixes.
+  - **gdocs**: Added `update_doc`, `list_docs`, and `search_docs` actions.
+  - **gsheets**: Added `update_cell`, `delete_rows`, `list_sheets` actions, JSON arrays input parsing, and formula execution.
+

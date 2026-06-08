@@ -31,16 +31,17 @@ def _register_default_skills() -> None:
     if not skill_manager.get("terminal"):
         skill_manager.register(TerminalSkill())
 
-    from .skills.weather_skill      import WeatherSkill
-    from .skills.web_search_skill   import WebSearchSkill
-    from .skills.clipboard_skill    import ClipboardSkill
-    from .skills.screenshot_skill   import ScreenshotSkill
-    from .skills.youtube_skill      import YouTubeSkill
-    from .skills.web_scrape_skill   import WebScrapeSkill
-    from .skills.app_launcher_skill import AppLauncherSkill
+    from .skills.weather_skill        import WeatherSkill
+    from .skills.web_search_skill     import WebSearchSkill
+    from .skills.clipboard_skill      import ClipboardSkill
+    from .skills.screenshot_skill     import ScreenshotSkill
+    from .skills.youtube_skill        import YouTubeSkill
+    from .skills.web_scrape_skill     import WebScrapeSkill
+    from .skills.app_launcher_skill   import AppLauncherSkill
+    from .skills.daily_briefing_skill import DailyBriefingSkill
 
     for skill_cls in [WeatherSkill, WebSearchSkill, ClipboardSkill,
-                      ScreenshotSkill, YouTubeSkill, WebScrapeSkill, AppLauncherSkill]:
+                      ScreenshotSkill, YouTubeSkill, WebScrapeSkill, AppLauncherSkill, DailyBriefingSkill]:
         name = skill_cls.name if hasattr(skill_cls, 'name') else skill_cls.__name__.lower().replace("skill", "")
         if not skill_manager.get(name):
             skill_manager.register(skill_cls())
@@ -83,6 +84,7 @@ def get_tools_payload(user_message: Optional[str] = None) -> Optional[List[Dict]
         "clipboard": ["clipboard", "copy", "paste"],
         "screenshot": ["screenshot", "screen", "capture", "image", "view"],
         "app_launcher": ["launch", "open", "start", "app", "application", "chrome", "edge", "spotify", "discord", "slack"],
+        "daily_briefing": ["briefing", "tasks", "todo", "agenda", "schedule brief", "daily brief"],
         "gmail": ["email", "mail", "inbox", "gmail", "send"],
         "gcalendar": ["calendar", "event", "schedule", "meeting", "date", "appoint"],
         "gdocs": ["doc", "document", "google doc", "write doc"],
@@ -123,6 +125,8 @@ def get_tools_payload(user_message: Optional[str] = None) -> Optional[List[Dict]
         if tool_name.startswith("screenshot_") and "screenshot" in active_categories:
             return True
         if tool_name.startswith("app_launcher_") and "app_launcher" in active_categories:
+            return True
+        if tool_name.startswith("daily_briefing_") and "daily_briefing" in active_categories:
             return True
         if tool_name.startswith("gmail_") and "gmail" in active_categories:
             return True

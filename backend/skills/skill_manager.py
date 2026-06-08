@@ -91,10 +91,11 @@ class SkillManager:
         """
         t0 = time.perf_counter()
 
-        # Find a registered skill whose name is a prefix of tool_name
+        # Find a registered skill whose name is a prefix of tool_name (longest prefix first)
         skill_name  = None
         action_name = None
-        for name in SkillRegistry.all():
+        sorted_names = sorted(SkillRegistry.all().keys(), key=len, reverse=True)
+        for name in sorted_names:
             prefix = f"{name}_"
             if tool_name.startswith(prefix):
                 skill_name  = name
@@ -104,8 +105,15 @@ class SkillManager:
         if skill_name is None:
             result = SkillResult.invalid(f"No skill found for tool '{tool_name}'")
         else:
-            skill  = SkillRegistry.get(skill_name)
-            result = skill.run(action_name, **args)
+            skill = SkillRegistry.get(skill_name)
+            actions = skill.get_actions()
+            action_func = actions.get(action_name)
+            action_perms = getattr(action_func, "_permissions", [])
+
+            if not permission_manager.validate(action_perms, tool_name):
+                result = SkillResult.fail(f"Permission denied for tool '{tool_name}'")
+            else:
+                result = skill.run(action_name, **args)
 
         result.duration_ms = (time.perf_counter() - t0) * 1000
         self._history.append({
@@ -119,12 +127,14 @@ class SkillManager:
 
     async def dispatch_async(self, tool_name: str, args: Dict[str, Any]) -> SkillResult:
         """Asynchronously route an LLM tool_call to the correct skill + action."""
+        import asyncio
         t0 = time.perf_counter()
 
-        # Find a registered skill whose name is a prefix of tool_name
+        # Find a registered skill whose name is a prefix of tool_name (longest prefix first)
         skill_name  = None
         action_name = None
-        for name in SkillRegistry.all():
+        sorted_names = sorted(SkillRegistry.all().keys(), key=len, reverse=True)
+        for name in sorted_names:
             prefix = f"{name}_"
             if tool_name.startswith(prefix):
                 skill_name  = name
@@ -133,11 +143,25 @@ class SkillManager:
 
         if skill_name is None:
             result = SkillResult.invalid(f"No skill found for tool '{tool_name}'")
-        elif not permission_manager.validate([], tool_name):
-            result = SkillResult.fail(f"Permission denied for tool '{tool_name}'")
         else:
-            skill  = SkillRegistry.get(skill_name)
-            result = await skill.run_async(action_name, **args)
+            skill = SkillRegistry.get(skill_name)
+            actions = skill.get_actions()
+            action_func = actions.get(action_name)
+            action_perms = getattr(action_func, "_permissions", [])
+
+            if not permission_manager.validate(action_perms, tool_name):
+                result = SkillResult.fail(f"Permission denied for tool '{tool_name}'")
+            else:
+                try:
+                    # Wrap execution in a global 30-second timeout
+                    result = await asyncio.wait_for(skill.run_async(action_name, **args), timeout=30.0)
+                except asyncio.TimeoutError:
+                    result = SkillResult(
+                        status=SkillStatus.TIMEOUT,
+                        error=f"Execution timed out for tool '{tool_name}'",
+                        skill=skill_name,
+                        action=action_name
+                    )
 
         result.duration_ms = (time.perf_counter() - t0) * 1000
         self._history.append({

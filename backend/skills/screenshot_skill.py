@@ -7,6 +7,7 @@ import httpx
 from typing import Any, Dict
 
 from .skill_base import BaseSkill, SkillResult, skill_action
+from .code_skill import _api_config
 
 
 class ScreenshotSkill(BaseSkill):
@@ -21,6 +22,7 @@ class ScreenshotSkill(BaseSkill):
         description="Take a screenshot and describe what's visible on the screen using AI vision.",
         params={},
         required=[],
+        permissions=["screenshot:capture"]
     )
     async def capture_screenshot(self) -> SkillResult:
         import asyncio
@@ -34,21 +36,35 @@ class ScreenshotSkill(BaseSkill):
             return SkillResult.fail("Screenshot not supported on this platform.")
 
         try:
+            # Resize to max 1280px width to reduce latency and API token usage
+            max_width = 1280
+            if img.width > max_width:
+                aspect = img.height / img.width
+                new_height = int(max_width * aspect)
+                # PIL.Image.Resampling.LANCZOS or default
+                img = img.resize((max_width, new_height))
+
             buf = io.BytesIO()
-            img.save(buf, format="PNG")
+            img.save(buf, format="JPEG", quality=85)  # JPEG is smaller than PNG
             b64 = base64.b64encode(buf.getvalue()).decode()
-            api_key = os.getenv("GROQ_API_KEY", "")
+            
+            url, api_key, model = _api_config()
+            # If using Groq, override to their standard vision model
+            if "api.groq.com" in url.lower():
+                model = "llama-3.2-11b-vision-preview"
+
             payload = {
-                "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+                "model": model,
                 "messages": [{"role": "user", "content": [
                     {"type": "text", "text": "Describe what is on this screen concisely for a voice assistant response."},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
                 ]}],
                 "max_tokens": 512,
             }
+            
             async with httpx.AsyncClient() as client:
                 r = await client.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
+                    url,
                     headers={"Authorization": f"Bearer {api_key}"},
                     json=payload,
                     timeout=30.0,

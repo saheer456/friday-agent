@@ -126,10 +126,11 @@ class CodeSkill(BaseSkill):
         params={
             "code":    {"type": "string", "description": "Python code to execute."},
             "timeout": {"type": "integer", "description": "Max execution seconds (default 15)."},
+            "cwd":     {"type": "string", "description": "Working directory path for execution (optional)."},
         },
         required=["code"],
     )
-    def execute_python(self, code: str, timeout: int = None) -> SkillResult:
+    def execute_python(self, code: str, timeout: int = None, cwd: str = None) -> SkillResult:
         """Run Python code in an isolated subprocess and return its output."""
         timeout = timeout or self._timeout
         tmp_path = None
@@ -141,15 +142,60 @@ class CodeSkill(BaseSkill):
                 f.write(textwrap.dedent(code))
                 tmp_path = f.name
 
+            # Scrub sensitive environment variables (API keys, secrets, passwords)
+            clean_env = {}
+            for k, v in os.environ.items():
+                if any(sec in k.upper() for sec in ["KEY", "TOKEN", "PASS", "SECRET", "CREDENTIAL", "AUTH"]):
+                    continue
+                clean_env[k] = v
+
+            # Resolve working directory if provided
+            exec_cwd = None
+            if cwd:
+                exec_cwd = str(Path(cwd).resolve())
+                if not os.path.exists(exec_cwd):
+                    os.makedirs(exec_cwd, exist_ok=True)
+
             proc = subprocess.run(
                 [sys.executable, tmp_path],
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                env=clean_env,
+                cwd=exec_cwd,
             )
 
-            stdout = "\n".join(proc.stdout.splitlines()[:self._max_lines])
+            # Auto-install missing module on ModuleNotFoundError and retry once
             stderr = proc.stderr.strip()
+            if proc.returncode != 0 and "ModuleNotFoundError: No module named" in stderr:
+                import re
+                match = re.search(r"ModuleNotFoundError: No module named ['\"]([^'\"]+)['\"]", stderr)
+                if match:
+                    missing_pkg = match.group(1)
+                    pkg_map = {"bs4": "beautifulsoup4", "yaml": "pyyaml"}
+                    install_name = pkg_map.get(missing_pkg, missing_pkg)
+                    
+                    # Attempt pip installation
+                    pip_proc = subprocess.run(
+                        [sys.executable, "-m", "pip", "install", install_name],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                        env=clean_env
+                    )
+                    if pip_proc.returncode == 0:
+                        # Retry execution
+                        proc = subprocess.run(
+                            [sys.executable, tmp_path],
+                            capture_output=True,
+                            text=True,
+                            timeout=timeout,
+                            env=clean_env,
+                            cwd=exec_cwd,
+                        )
+                        stderr = f"[Auto-installed {install_name}] " + proc.stderr.strip()
+
+            stdout = "\n".join(proc.stdout.splitlines()[:self._max_lines])
             success = proc.returncode == 0
 
             return SkillResult(

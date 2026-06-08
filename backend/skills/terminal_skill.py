@@ -6,8 +6,8 @@ Gives FRIDAY controlled access to the local filesystem and shell.
 SAFETY:
   - All shell commands run with a configurable timeout
   - A blocklist prevents destructive commands (rm -rf, format, del /f, etc.)
-  - File reads are capped at max_bytes to avoid LLM context flooding
-  - Writes only allowed inside the workspace root by default
+  - File reads are capped to avoid LLM context flooding
+  - Writes only allowed inside the workspace root
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ import re as _re
 import shlex
 import subprocess
 import sys
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -71,7 +72,9 @@ class TerminalSkill(BaseSkill):
         if not p.is_absolute():
             p = self._workspace / p
         p = p.resolve()
-        if not str(p).startswith(str(self._workspace)):
+        
+        # Ensure containment via Path.is_relative_to
+        if not p.is_relative_to(self._workspace):
             raise PermissionError(
                 f"Path '{p}' is outside the allowed workspace '{self._workspace}'. "
                 "Access denied."
@@ -80,14 +83,12 @@ class TerminalSkill(BaseSkill):
 
     def _is_blocked(self, command: str) -> bool:
         """Block if any token is a dangerous command OR shell metacharacters present."""
-        # Block shell metacharacters that enable command chaining
         if _re.search(r"[;&|`$()]", command):
             return True
         try:
             parts = shlex.split(command, posix=(sys.platform != "win32"))
         except ValueError:
             return True  # malformed shell input -> block
-        # Check every token, not just the first
         for part in parts:
             if Path(part).name.lower() in _HARD_BLOCK:
                 return True
@@ -106,6 +107,7 @@ class TerminalSkill(BaseSkill):
             "cwd":     {"type": "string", "description": "Working directory (optional)."},
         },
         required=["command"],
+        permissions=["terminal:shell"]
     )
     def run_command(self, command: str, cwd: Optional[str] = None) -> SkillResult:
         if not self._allow_shell:
@@ -115,7 +117,6 @@ class TerminalSkill(BaseSkill):
 
         work_dir = self._workspace if cwd is None else self._check_path(cwd)
         try:
-            # shell=False + tokenized list prevents shell injection
             try:
                 parts = shlex.split(command, posix=(sys.platform != "win32"))
             except ValueError as e:
@@ -128,13 +129,24 @@ class TerminalSkill(BaseSkill):
                 timeout=self._timeout,
                 cwd=str(work_dir),
             )
+            stdout_raw = proc.stdout.strip()
+            stderr_raw = proc.stderr.strip()
+            
+            stdout_limit = 8_000
+            stderr_limit = 2_000
+            
+            stdout = stdout_raw[:stdout_limit]
+            stderr = stderr_raw[:stderr_limit]
+            truncated = (len(stdout_raw) > stdout_limit) or (len(stderr_raw) > stderr_limit)
+            
             return SkillResult.ok(
                 message="Command executed.",
                 data={
-                    "stdout":    proc.stdout.strip()[:8_000],
-                    "stderr":    proc.stderr.strip()[:2_000],
+                    "stdout":    stdout,
+                    "stderr":    stderr,
                     "exit_code": proc.returncode,
                     "cwd":       str(work_dir),
+                    "truncated": truncated,
                 },
             )
         except subprocess.TimeoutExpired:
@@ -149,6 +161,7 @@ class TerminalSkill(BaseSkill):
             "max_bytes": {"type": "integer", "description": "Max bytes to read (default 32768)."},
         },
         required=["path"],
+        permissions=["terminal:read"]
     )
     def read_file(self, path: str, max_bytes: Optional[int] = None) -> SkillResult:
         try:
@@ -156,10 +169,17 @@ class TerminalSkill(BaseSkill):
             if not p.exists():
                 return SkillResult.fail(f"File not found: {p}")
             limit = max_bytes or self._max_bytes
-            content = p.read_bytes()[:limit].decode("utf-8", errors="replace")
+            content_raw = p.read_bytes()
+            content = content_raw[:limit].decode("utf-8", errors="replace")
+            truncated = len(content_raw) > limit
             return SkillResult.ok(
                 message=f"Read {len(content)} chars from {p.name}",
-                data={"content": content, "path": str(p), "size_bytes": p.stat().st_size},
+                data={
+                    "content": content,
+                    "path": str(p),
+                    "size_bytes": p.stat().st_size,
+                    "truncated": truncated
+                },
             )
         except PermissionError as e:
             return SkillResult.fail(str(e))
@@ -174,6 +194,7 @@ class TerminalSkill(BaseSkill):
             "append":  {"type": "boolean", "description": "If true, append instead of overwrite."},
         },
         required=["path", "content"],
+        permissions=["terminal:write"]
     )
     def write_file(self, path: str, content: str, append: bool = False) -> SkillResult:
         if not self._allow_write:
@@ -200,6 +221,7 @@ class TerminalSkill(BaseSkill):
             "pattern": {"type": "string", "description": "Glob pattern to filter results (e.g. '*.py')."},
         },
         required=[],
+        permissions=["terminal:read"]
     )
     def list_directory(self, path: str = ".", pattern: str = "*") -> SkillResult:
         try:
@@ -221,3 +243,111 @@ class TerminalSkill(BaseSkill):
             return SkillResult.fail(str(e))
         except Exception as e:
             return SkillResult.fail(f"List error: {e}")
+
+    @skill_action(
+        description="Copy a file or directory.",
+        params={
+            "src": {"type": "string", "description": "Source path (relative or absolute)."},
+            "dst": {"type": "string", "description": "Destination path (relative or absolute)."},
+        },
+        required=["src", "dst"],
+        permissions=["terminal:write"]
+    )
+    def copy_file(self, src: str, dst: str) -> SkillResult:
+        try:
+            s = self._check_path(src)
+            d = self._check_path(dst)
+            if not s.exists():
+                return SkillResult.fail(f"Source path does not exist: {s}")
+            if s.is_dir():
+                shutil.copytree(s, d, dirs_exist_ok=True)
+            else:
+                shutil.copy2(s, d)
+            return SkillResult.ok(message=f"Copied {src} to {dst}.")
+        except Exception as e:
+            return SkillResult.fail(f"Copy failed: {e}")
+
+    @skill_action(
+        description="Move/rename a file or directory.",
+        params={
+            "src": {"type": "string", "description": "Source path (relative or absolute)."},
+            "dst": {"type": "string", "description": "Destination path (relative or absolute)."},
+        },
+        required=["src", "dst"],
+        permissions=["terminal:write"]
+    )
+    def move_file(self, src: str, dst: str) -> SkillResult:
+        try:
+            s = self._check_path(src)
+            d = self._check_path(dst)
+            if not s.exists():
+                return SkillResult.fail(f"Source path does not exist: {s}")
+            shutil.move(str(s), str(d))
+            return SkillResult.ok(message=f"Moved {src} to {dst}.")
+        except Exception as e:
+            return SkillResult.fail(f"Move failed: {e}")
+
+    @skill_action(
+        description="Delete a file or empty directory.",
+        params={
+            "path": {"type": "string", "description": "File or folder path to delete."},
+        },
+        required=["path"],
+        permissions=["terminal:write"]
+    )
+    def delete_file(self, path: str) -> SkillResult:
+        try:
+            p = self._check_path(path)
+            if not p.exists():
+                return SkillResult.fail(f"Path does not exist: {p}")
+            if p.is_dir():
+                p.rmdir()  # only delete empty dirs for safety
+                msg = f"Deleted directory {path}."
+            else:
+                p.unlink()
+                msg = f"Deleted file {path}."
+            return SkillResult.ok(message=msg)
+        except Exception as e:
+            return SkillResult.fail(f"Delete failed: {e}")
+
+    @skill_action(
+        description="Search for files recursively by name patterns or search content inside files.",
+        params={
+            "path":    {"type": "string", "description": "Root path to search (default: workspace root)."},
+            "pattern": {"type": "string", "description": "File name glob pattern (e.g. '*.py')."},
+            "query":   {"type": "string", "description": "Text query to search for inside files (optional)."},
+        },
+        required=[],
+        permissions=["terminal:read"]
+    )
+    def search_files(self, path: str = ".", pattern: str = "*", query: Optional[str] = None) -> SkillResult:
+        try:
+            root = self._check_path(path)
+            if not root.is_dir():
+                return SkillResult.fail(f"Not a directory: {root}")
+            
+            results = []
+            for p in root.rglob(pattern):
+                try:
+                    p_resolved = p.resolve()
+                    if not p_resolved.is_relative_to(self._workspace):
+                        continue
+                    if p_resolved.is_file():
+                        if query:
+                            # Read text ignoring errors (skips binaries gracefully)
+                            content = p_resolved.read_text(encoding="utf-8", errors="ignore")
+                            if query in content:
+                                results.append(str(p_resolved.relative_to(self._workspace)))
+                        else:
+                            results.append(str(p_resolved.relative_to(self._workspace)))
+                except Exception:
+                    continue
+                if len(results) >= 100:
+                    break
+            
+            return SkillResult.ok(
+                message=f"Search complete. Found {len(results)} files.",
+                data={"results": results[:100]}
+            )
+        except Exception as e:
+            return SkillResult.fail(f"Search failed: {e}")

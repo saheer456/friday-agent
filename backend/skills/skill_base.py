@@ -79,6 +79,7 @@ def skill_action(
     description: str,
     params: Optional[Dict[str, Any]] = None,
     required: Optional[List[str]] = None,
+    permissions: Optional[List[str]] = None,
 ):
     """
     Decorator that marks a method as an invokable skill action.
@@ -89,6 +90,7 @@ def skill_action(
             description="Send an email to a recipient.",
             params={"to": {"type": "string"}, "body": {"type": "string"}},
             required=["to", "body"],
+            permissions=["email_send"],
         )
         def send(self, to: str, body: str) -> SkillResult: ...
     """
@@ -97,8 +99,41 @@ def skill_action(
         fn._description     = description
         fn._params          = params or {}
         fn._required        = required or []
+        fn._permissions     = permissions or []
         return fn
     return decorator
+
+
+def validate_params(action_name: str, declared_params: Dict[str, Any], required_params: List[str], incoming_kwargs: Dict[str, Any]) -> Optional[str]:
+    """Helper to validate parameter existence and basic type checking."""
+    for p in required_params:
+        if p not in incoming_kwargs:
+            return f"Missing required parameter '{p}' for action '{action_name}'."
+    
+    type_mapping = {
+        "string": str,
+        "integer": int,
+        "number": (int, float),
+        "boolean": bool,
+        "array": list,
+        "object": dict
+    }
+
+    for p, val in incoming_kwargs.items():
+        if p not in declared_params:
+            continue
+        expected_type_str = declared_params[p].get("type")
+        if not expected_type_str:
+            continue
+        expected_type = type_mapping.get(expected_type_str)
+        if expected_type:
+            if not isinstance(val, expected_type):
+                # Float can match int or float when 'number' is expected
+                if expected_type == (int, float) and isinstance(val, (int, float)):
+                    continue
+                return f"Parameter '{p}' for action '{action_name}' expected type '{expected_type_str}', got '{type(val).__name__}'."
+    return None
+
 
 
 # ── Base Skill ─────────────────────────────────────────────────────────────────
@@ -184,9 +219,20 @@ class BaseSkill(ABC):
         if action not in actions:
             return SkillResult.invalid(f"Unknown action '{action}' for skill '{self.name}'")
 
+        method = actions[action]
+        import inspect
+        if inspect.iscoroutinefunction(method):
+            self._fail_count += 1
+            return SkillResult.invalid(f"Action '{action}' is asynchronous and must be run via run_async.")
+
+        val_error = validate_params(action, method._params, method._required, kwargs)
+        if val_error:
+            self._fail_count += 1
+            return SkillResult.invalid(val_error)
+
         t0 = time.perf_counter()
         try:
-            result = actions[action](**kwargs)
+            result = method(**kwargs)
             result.skill  = self.name
             result.action = action
             result.duration_ms = (time.perf_counter() - t0) * 1000
@@ -216,13 +262,18 @@ class BaseSkill(ABC):
         if action not in actions:
             return SkillResult.invalid(f"Unknown action '{action}' for skill '{self.name}'")
 
+        method = actions[action]
+        val_error = validate_params(action, method._params, method._required, kwargs)
+        if val_error:
+            self._fail_count += 1
+            return SkillResult.invalid(val_error)
+
         t0 = time.perf_counter()
         try:
-            func = actions[action]
-            if inspect.iscoroutinefunction(func):
-                result = await func(**kwargs)
+            if inspect.iscoroutinefunction(method):
+                result = await method(**kwargs)
             else:
-                result = await asyncio.to_thread(func, **kwargs)
+                result = await asyncio.to_thread(method, **kwargs)
             result.skill  = self.name
             result.action = action
             result.duration_ms = (time.perf_counter() - t0) * 1000
@@ -238,6 +289,7 @@ class BaseSkill(ABC):
             return SkillResult.fail(str(e), skill=self.name, action=action,
                                     duration_ms=(time.perf_counter() - t0) * 1000)
 
+
     # ── Info ───────────────────────────────────────────────────────────────────
 
     def info(self) -> Dict[str, Any]:
@@ -251,32 +303,45 @@ class BaseSkill(ABC):
             "fail_count":  self._fail_count,
         }
 
+    def health_check(self) -> bool:
+        """Check if the skill's backing services are reachable. Defaults to True."""
+        return True
+
 
 # ── Global Registry ────────────────────────────────────────────────────────────
+
+import threading
 
 class SkillRegistry:
     """Thread-safe global registry of all registered BaseSkill instances."""
 
     _skills: Dict[str, BaseSkill] = {}
+    _lock = threading.Lock()
 
     @classmethod
     def register(cls, skill: BaseSkill) -> None:
         if not skill.name:
             raise ValueError("Skill must have a non-empty name.")
-        cls._skills[skill.name] = skill
+        with cls._lock:
+            cls._skills[skill.name] = skill
 
     @classmethod
     def unregister(cls, name: str) -> None:
-        cls._skills.pop(name, None)
+        with cls._lock:
+            cls._skills.pop(name, None)
 
     @classmethod
     def get(cls, name: str) -> Optional[BaseSkill]:
-        return cls._skills.get(name)
+        with cls._lock:
+            return cls._skills.get(name)
 
     @classmethod
     def all(cls) -> Dict[str, BaseSkill]:
-        return dict(cls._skills)
+        with cls._lock:
+            return dict(cls._skills)
 
     @classmethod
     def clear(cls) -> None:
-        cls._skills.clear()
+        with cls._lock:
+            cls._skills.clear()
+

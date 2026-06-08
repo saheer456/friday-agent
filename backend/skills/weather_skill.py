@@ -40,7 +40,7 @@ WMO = {
 
 class WeatherSkill(BaseSkill):
     name = "weather"
-    description = "Get current weather and forecasts for any location using coordinates."
+    description = "Get current weather, hourly forecast, and air quality information."
 
     def configure(self, config: Dict[str, Any] = {}) -> bool:
         self._lat = float(config.get("lat", os.getenv("FRIDAY_LAT", "28.6")))
@@ -51,18 +51,29 @@ class WeatherSkill(BaseSkill):
     def __init__(self) -> None:
         super().__init__()
         self.configure()
+        self._weather_client: httpx.AsyncClient | None = None
 
-    async def _fetch(self, forecast_days: int = 1, lat: Optional[float] = None, lon: Optional[float] = None, location: Optional[str] = None) -> dict:
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._weather_client is None:
+            self._weather_client = httpx.AsyncClient(timeout=8.0)
+        return self._weather_client
+
+    async def health_check(self) -> bool:
+        try:
+            r = await self._get_client().get("https://geocoding-api.open-meteo.com/v1/search?name=London&count=1", timeout=3.0)
+            return r.status_code == 200
+        except Exception:
+            return False
+
+    async def _resolve_coords(self, location: Optional[str], lat: Optional[float], lon: Optional[float]) -> tuple[float, float, str | None]:
         resolved_name = None
         if location and location.strip().upper() != "DEFAULT":
             from ..tools_utils import geocode_location, CITY_ALIASES
-            # Normalize alias before geocoding
             normalized_loc = CITY_ALIASES.get(location.strip().lower(), location.strip())
             res = await geocode_location(normalized_loc)
             if res:
                 lat, lon, resolved_name = res
             else:
-                # Return a sentinel that callers convert to SkillResult.fail
                 raise ValueError(
                     f"Could not find location '{location}'"
                     + (f" (tried '{normalized_loc}')" if normalized_loc != location.strip() else "")
@@ -80,20 +91,21 @@ class WeatherSkill(BaseSkill):
                 if res:
                     latitude, longitude, resolved_name = res[0], res[1], res[2]
 
+        return latitude, longitude, resolved_name
+
+    async def _fetch(self, forecast_days: int = 1, lat: Optional[float] = None, lon: Optional[float] = None, location: Optional[str] = None) -> dict:
+        latitude, longitude, resolved_name = await self._resolve_coords(location, lat, lon)
         data = None
         backend = None
 
-        # wttr.in only supports up to 3 days of forecast
         if forecast_days <= 3:
             try:
                 wttr_url = f"https://wttr.in/{latitude},{longitude}?format=j1"
-                async with httpx.AsyncClient() as client:
-                    r = await client.get(wttr_url, timeout=5.0)
+                client = self._get_client()
+                r = await client.get(wttr_url, timeout=5.0)
                 if r.status_code == 200:
-                    wttr_data = r.json()
-                    if "current_condition" in wttr_data and "weather" in wttr_data:
-                        data = wttr_data
-                        backend = "wttr.in"
+                    data = r.json()
+                    backend = "wttr.in"
             except Exception:
                 pass
 
@@ -105,11 +117,13 @@ class WeatherSkill(BaseSkill):
                 f"&daily=temperature_2m_max,temperature_2m_min"
                 f"&timezone=auto&forecast_days={forecast_days}"
             )
-            async with httpx.AsyncClient() as client:
-                r = await client.get(url, timeout=8.0)
+            client = self._get_client()
+            r = await client.get(url, timeout=8.0)
             r.raise_for_status()
             data = r.json()
             backend = "open-meteo"
+
+        timezone_resp = data.get("timezone", "auto")
 
         if backend == "wttr.in":
             current_cond = data["current_condition"][0]
@@ -158,17 +172,19 @@ class WeatherSkill(BaseSkill):
             "wind_kph": wind_kph,
             "max_c": max_c,
             "min_c": min_c,
-            "forecast": forecast
+            "forecast": forecast,
+            "timezone": timezone_resp
         }
 
     @skill_action(
         description="Get current weather conditions for the default or a specified location.",
         params={
             "location": {"type": "string", "description": "Location name / city (optional, e.g. 'London', 'Kozhikode')."},
-            "lat": {"type": "number", "description": "Latitude (optional, defaults to configured location)."},
-            "lon": {"type": "number", "description": "Longitude (optional, defaults to configured location)."},
+            "lat": {"type": "number", "description": "Latitude (optional)."},
+            "lon": {"type": "number", "description": "Longitude (optional)."},
         },
         required=[],
+        permissions=["weather:read"]
     )
     async def get_current_weather(self, location: Optional[str] = None, lat: Optional[float] = None, lon: Optional[float] = None) -> SkillResult:
         try:
@@ -187,6 +203,7 @@ class WeatherSkill(BaseSkill):
                     "max_c": parsed["max_c"],
                     "min_c": parsed["min_c"],
                     "resolved_location": resolved_name,
+                    "timezone": parsed["timezone"],
                     "backend": parsed["backend"]
                 },
             )
@@ -194,14 +211,15 @@ class WeatherSkill(BaseSkill):
             return SkillResult.fail(f"Weather fetch failed: {e}")
 
     @skill_action(
-        description="Get a multi-day weather forecast (today + next N days). Use this for tomorrow's weather.",
+        description="Get a multi-day weather forecast (today + next N days).",
         params={
             "days": {"type": "integer", "description": "Number of forecast days (default 3, includes today)."},
-            "location": {"type": "string", "description": "Location name / city (optional, e.g. 'London', 'Kozhikode')."},
+            "location": {"type": "string", "description": "Location name / city (optional)."},
             "lat": {"type": "number", "description": "Latitude (optional)."},
             "lon": {"type": "number", "description": "Longitude (optional)."},
         },
         required=[],
+        permissions=["weather:read"]
     )
     async def get_forecast(self, days: int = 3, location: Optional[str] = None, lat: Optional[float] = None, lon: Optional[float] = None) -> SkillResult:
         try:
@@ -212,8 +230,119 @@ class WeatherSkill(BaseSkill):
                 data={
                     "forecast": parsed["forecast"],
                     "resolved_location": resolved_name,
+                    "timezone": parsed["timezone"],
                     "backend": parsed["backend"]
                 },
             )
         except Exception as e:
             return SkillResult.fail(f"Forecast fetch failed: {e}")
+
+    @skill_action(
+        description="Get hourly weather forecast (temperature, humidity, condition) for the next N hours.",
+        params={
+            "location": {"type": "string", "description": "Location name / city (optional)."},
+            "lat": {"type": "number", "description": "Latitude (optional)."},
+            "lon": {"type": "number", "description": "Longitude (optional)."},
+            "hours": {"type": "integer", "description": "Number of hours to return (default 24)."},
+        },
+        required=[],
+        permissions=["weather:read"]
+    )
+    async def get_hourly_forecast(self, location: Optional[str] = None, lat: Optional[float] = None, lon: Optional[float] = None, hours: int = 24) -> SkillResult:
+        try:
+            latitude, longitude, resolved_name = await self._resolve_coords(location, lat, lon)
+            url = f"https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&hourly=temperature_2m,relativehumidity_2m,weathercode&timezone=auto&forecast_days=2"
+            
+            client = self._get_client()
+            r = await client.get(url)
+            r.raise_for_status()
+            data = r.json()
+            
+            hourly = data["hourly"]
+            timezone_resp = data.get("timezone", "auto")
+            
+            hours_data = []
+            for i in range(min(hours, len(hourly["time"]))):
+                w_code = hourly["weathercode"][i]
+                cond = WMO.get(w_code, "Unknown")
+                hours_data.append({
+                    "time": hourly["time"][i],
+                    "temp_c": hourly["temperature_2m"][i],
+                    "humidity": hourly["relativehumidity_2m"][i],
+                    "condition": cond
+                })
+            
+            return SkillResult.ok(
+                message=f"Hourly forecast retrieved for {resolved_name or 'configured location'}.",
+                data={
+                    "resolved_location": resolved_name,
+                    "timezone": timezone_resp,
+                    "hourly": hours_data
+                }
+            )
+        except Exception as e:
+            return SkillResult.fail(f"Hourly forecast fetch failed: {e}")
+
+    @skill_action(
+        description="Get current air quality indexes (AQI, PM2.5, PM10, CO, NO2, SO2, O3) for a location.",
+        params={
+            "location": {"type": "string", "description": "Location name / city (optional)."},
+            "lat": {"type": "number", "description": "Latitude (optional)."},
+            "lon": {"type": "number", "description": "Longitude (optional)."},
+        },
+        required=[],
+        permissions=["weather:read"]
+    )
+    async def get_air_quality(self, location: Optional[str] = None, lat: Optional[float] = None, lon: Optional[float] = None) -> SkillResult:
+        try:
+            latitude, longitude, resolved_name = await self._resolve_coords(location, lat, lon)
+            url = f"https://air-quality-api.open-meteo.com/v1/air-quality?latitude={latitude}&longitude={longitude}&current=pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone,us_aqi&timezone=auto"
+            
+            client = self._get_client()
+            r = await client.get(url)
+            r.raise_for_status()
+            data = r.json()
+            
+            cur = data["current"]
+            aqi = cur.get("us_aqi")
+            
+            if aqi is None:
+                category = "Unknown"
+            elif aqi <= 50:
+                category = "Good (Little to no risk)"
+            elif aqi <= 100:
+                category = "Moderate (Acceptable)"
+            elif aqi <= 150:
+                category = "Unhealthy for Sensitive Groups"
+            elif aqi <= 200:
+                category = "Unhealthy"
+            elif aqi <= 300:
+                category = "Very Unhealthy (Health alert)"
+            else:
+                category = "Hazardous (Health warning)"
+            
+            summary = (
+                f"Air Quality at {resolved_name or 'configured location'}: AQI {aqi} ({category}), "
+                f"PM2.5: {cur.get('pm2_5')} µg/m³, PM10: {cur.get('pm10')} µg/m³, "
+                f"NO2: {cur.get('nitrogen_dioxide')} µg/m³, O3: {cur.get('ozone')} µg/m³"
+            )
+            
+            return SkillResult.ok(
+                message="Air quality data retrieved.",
+                data={
+                    "resolved_location": resolved_name,
+                    "summary": summary,
+                    "aqi": aqi,
+                    "category": category,
+                    "pollutants": {
+                        "pm2_5": cur.get("pm2_5"),
+                        "pm10": cur.get("pm10"),
+                        "carbon_monoxide": cur.get("carbon_monoxide"),
+                        "nitrogen_dioxide": cur.get("nitrogen_dioxide"),
+                        "sulphur_dioxide": cur.get("sulphur_dioxide"),
+                        "ozone": cur.get("ozone")
+                    }
+                }
+            )
+        except Exception as e:
+            return SkillResult.fail(f"Air quality fetch failed: {e}")

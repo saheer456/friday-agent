@@ -1,4 +1,4 @@
-﻿"""
+"""
 FRIDAY web server ΓÇö FastAPI + SSE streaming chat.
 Run from repo root: python -m uvicorn web.server:app --host 127.0.0.1 --port 8080
 """
@@ -176,9 +176,9 @@ async def _assert_session_access(session_id: str, user: dict) -> None:
 
 
 def _ui_info() -> dict:
-    version = (os.getenv("FRIDAY_UI_VERSION") or "v4.1 Nexus").strip()
+    version = (os.getenv("FRIDAY_UI_VERSION") or "v4.2 Nexus").strip()
     if not version:
-        version = "v4.1 Nexus"
+        version = "v4.2 Nexus"
     return {"version": version}
 
 
