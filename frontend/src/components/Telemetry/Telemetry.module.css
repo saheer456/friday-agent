@@ -1,6 +1,8 @@
 .telemetry {
   width: 300px;
-  background: var(--bg1);
+  background: var(--bg-glass-solid);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border-left: 1px solid var(--outline);
   padding: 24px 20px;
   display: flex;
@@ -30,7 +32,7 @@
   height: 8px;
   border-radius: 50%;
   background: var(--primary);
-  box-shadow: 0 0 6px rgba(74,124,89,0.4);
+  box-shadow: 0 0 10px var(--primary-border);
   animation: glow-pulse 2s ease-in-out infinite alternate;
   flex-shrink: 0;
 }
@@ -39,13 +41,13 @@
   to   { opacity: 1; }
 }
 
-/* ── Cards ─── */
 .stackCard {
-  background: var(--bg1);
+  background: var(--bg-glass-light);
+  backdrop-filter: blur(8px);
   border: 1px solid var(--outline);
   border-radius: var(--radius);
   padding: 16px;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-glass);
 }
 .stackCard h3 {
   font-size: 0.72rem;
@@ -56,7 +58,6 @@
   margin-bottom: 12px;
 }
 
-/* ── Status Badges ─── */
 .statusRow {
   display: flex;
   align-items: center;
@@ -75,14 +76,14 @@
   flex-shrink: 0;
 }
 .statusBadge.active {
-  background: rgba(74,124,89,0.12);
+  background: var(--primary-dim);
   color: var(--primary);
   border: 1px solid var(--primary-border);
 }
 .statusBadge.loading {
   background: var(--amber-dim);
   color: var(--amber);
-  border: 1px solid rgba(112,92,48,0.25);
+  border: 1px solid rgba(251, 191, 36, 0.2);
   animation: pulse-busy 1.5s infinite alternate;
 }
 .statusLabel {
@@ -90,7 +91,6 @@
   color: var(--text);
 }
 
-/* ── Spec Grid ─── */
 .specGrid {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -113,7 +113,7 @@
 }
 .specSkel {
   height: 64px;
-  background: linear-gradient(90deg, var(--bg2) 25%, var(--bg1) 50%, var(--bg2) 75%);
+  background: linear-gradient(90deg, var(--bg-glass-hover) 25%, var(--bg-glass-light) 50%, var(--bg-glass-hover) 75%);
   background-size: 200% 100%;
   animation: skel 1.5s infinite;
   border-radius: var(--radius-sm);
@@ -123,16 +123,13 @@
   100% { background-position: -200% 0; }
 }
 
-/* ── Backend Trace ─── */
 .feedCard {
   flex-grow: 1;
   display: flex;
   flex-direction: column;
-  background: #1e1e1e;
-  border-color: rgba(46,50,48,0.4);
 }
 .feedCard h3 {
-  color: #8fbc94;
+  color: var(--primary);
 }
 .feedHead {
   display: flex;
@@ -158,10 +155,10 @@
   gap: 8px;
 }
 .phaseLine {
-  background: rgba(255,255,255,0.04);
+  background: var(--bg-glass-light);
   padding: 8px;
   border-radius: var(--radius-sm);
-  border-left: 2px solid #4a7c59;
+  border-left: 2px solid var(--primary);
   animation: slide-in 0.2s ease-out;
 }
 @keyframes slide-in {
@@ -171,21 +168,20 @@
 .phId {
   float: right;
   font-size: 0.58rem;
-  color: #6b7066;
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 .phTitle {
-  color: #8fbc94;
+  color: var(--primary);
   margin-bottom: 3px;
   font-weight: 600;
 }
 .phDetail {
-  color: #9ca3af;
+  color: var(--text-muted);
   word-break: break-word;
 }
 
-/* ── Close button (mobile only) ─── */
 .closeBtn {
   display: none;
   position: absolute;
@@ -197,14 +193,13 @@
   justify-content: center;
   border-radius: var(--radius-sm);
   border: 1px solid var(--outline);
-  background: transparent;
+  background: var(--bg-glass-light);
   color: var(--text-muted);
   cursor: pointer;
   font-size: 1.1rem;
   line-height: 1;
 }
 
-/* ── Mobile overlay ─── */
 @media (max-width: 768px) {
   .telemetry {
     position: fixed;
@@ -215,30 +210,24 @@
     width: min(300px, 90vw);
     transform: translateX(100%);
     border-left: 1px solid var(--outline);
-    box-shadow: -8px 0 32px rgba(46,50,48,0.14);
   }
-
   .telemetry.open {
     transform: translateX(0);
   }
-
   .closeBtn {
     display: flex;
   }
 }
 
-/* ── Mobile backdrop ─── */
-.backdrop {
-  display: none;
-}
+.backdrop { display: none; }
 @media (max-width: 768px) {
   .backdrop {
     display: block;
     position: fixed;
     inset: 0;
     z-index: 199;
-    background: rgba(46,50,48,0.35);
-    backdrop-filter: blur(2px);
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(6px);
     animation: fade-in 0.2s ease;
   }
 }

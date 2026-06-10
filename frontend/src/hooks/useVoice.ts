@@ -84,6 +84,7 @@ export function useVoice(
   const [isRecording, setIsRecording] = useState(false);
   const [sttSupported, setSttSupported] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
 
   // ── STT refs ─────────────────────────────────────────────────
   const recognitionRef = useRef<any>(null);
@@ -176,11 +177,27 @@ export function useVoice(
     blobUrlsRef.current = [];
   }, []);
 
+  // ── togglePause ───────────────────────────────────────────────
+  const togglePause = useCallback(() => {
+    setIsPaused(prev => {
+      const next = !prev;
+      if (currentAudioRef.current) {
+        if (next) {
+          currentAudioRef.current.pause();
+        } else {
+          currentAudioRef.current.play().catch(() => {});
+        }
+      }
+      return next;
+    });
+  }, []);
+
   // ── stopAudio ─────────────────────────────────────────────────
   const stopAudio = useCallback(() => {
     generationRef.current++;       // invalidate all pending callbacks
     _cleanupAudio();
     setIsPlaying(false);
+    setIsPaused(false);
     queueRef.current = [];
     isProcessingRef.current = false;
   }, [_cleanupAudio]);
@@ -325,8 +342,10 @@ export function useVoice(
   return {
     isRecording,
     isPlaying,
+    isPaused,
     toggleRecording,
     stopAudio,
+    togglePause,
     queueTTS,
     sttSupported,
   };

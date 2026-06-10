@@ -10,7 +10,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
+
+from pydantic import BaseModel, ValidationError, create_model
 
 from .skills import skill_manager
 from .skills.code_skill     import CodeSkill
@@ -18,6 +20,57 @@ from .skills.terminal_skill import TerminalSkill
 from .skills.google_auth    import is_google_configured
 from .security import permission_manager
 from .events import event_bus
+
+logger = logging.getLogger("ToolBridge")
+
+
+TYPE_MAP = {
+    "string": (str, ...),
+    "integer": (int, ...),
+    "number": (float, ...),
+    "boolean": (bool, ...),
+    "array": (list, ...),
+    "object": (dict, ...),
+}
+
+
+def _build_tool_schema(tool_name: str, props: dict[str, Any], required: list[str]) -> type[BaseModel]:
+    """Dynamically create a Pydantic model from a tool's schema properties."""
+    fields: dict[str, tuple[Any, Any]] = {}
+    for pname, pdef in props.items():
+        ptype = pdef.get("type", "string")
+        py_type, default = TYPE_MAP.get(ptype, (str, ...))
+        if pname not in required:
+            default = None
+            py_type = Optional[py_type]
+        fields[pname] = (py_type, default)
+    return create_model(f"{tool_name}_args", **fields)  # type: ignore
+
+
+def _validate_tool_args(tool_name: str, raw_args: str, tool_schemas: list[Dict]) -> tuple[Dict | None, str | None]:
+    """Validate tool arguments against the declared schema. Returns (parsed_args, error_msg)."""
+    try:
+        parsed = json.loads(raw_args) if raw_args and raw_args.strip() else {}
+    except json.JSONDecodeError as jde:
+        return None, f"Invalid JSON in tool call arguments: {jde}. Raw: {raw_args}"
+
+    # Find matching schema
+    for schema in tool_schemas:
+        fn_info = schema.get("function", {})
+        if fn_info.get("name") == tool_name:
+            params = fn_info.get("parameters", {})
+            props = params.get("properties", {})
+            required = params.get("required", [])
+            model_class = _build_tool_schema(tool_name, props, required)
+            try:
+                validated = model_class(**parsed)
+                return validated.model_dump(exclude_none=True), None
+            except ValidationError as ve:
+                return None, f"Tool '{tool_name}' argument validation failed: {ve}"
+
+    # Schema not found; still return parsed args (no strict enforcement)
+    return parsed, None
+
 
 logger = logging.getLogger("ToolBridge")
 
@@ -150,18 +203,25 @@ def get_tools_payload(user_message: Optional[str] = None) -> Optional[List[Dict]
     return filtered if filtered else schemas
 
 
-def handle_tool_call(tool_name: str, tool_args_json: str) -> str:
-    try:
-        args = json.loads(tool_args_json) if tool_args_json and tool_args_json.strip() else {}
-    except json.JSONDecodeError as jde:
-        logger.warning("Failed to parse tool arguments JSON for %s: '%s' error: %s", tool_name, tool_args_json, jde)
+def _validate_call(tool_name: str, tool_args_json: str):
+    """Common validation for both sync and async tool calls."""
+    schemas = skill_manager.get_tool_schemas()
+    parsed, error = _validate_tool_args(tool_name, tool_args_json, schemas)
+    if error:
         from .skills.skill_base import SkillResult
-        return SkillResult.invalid(
-            f"Invalid JSON in tool call arguments: {jde}. Raw arguments: {tool_args_json}"
-        ).to_tool_message()
+        return None, SkillResult.invalid(error)
+    if parsed is None:
+        parsed = {}
+    return parsed, None
+
+
+def handle_tool_call(tool_name: str, tool_args_json: str) -> str:
+    parsed, validation_error = _validate_call(tool_name, tool_args_json)
+    if validation_error:
+        return validation_error.to_tool_message()
 
     try:
-        result = skill_manager.dispatch(tool_name, args)
+        result = skill_manager.dispatch(tool_name, parsed)
         return result.to_tool_message()
     except Exception as e:
         logger.error("Tool execution failed for %s: %s", tool_name, e)
@@ -170,17 +230,12 @@ def handle_tool_call(tool_name: str, tool_args_json: str) -> str:
 
 
 async def handle_tool_call_async(tool_name: str, tool_args_json: str) -> str:
-    try:
-        args = json.loads(tool_args_json) if tool_args_json and tool_args_json.strip() else {}
-    except json.JSONDecodeError as jde:
-        logger.warning("Failed to parse tool arguments JSON for %s: '%s' error: %s", tool_name, tool_args_json, jde)
-        from .skills.skill_base import SkillResult
-        return SkillResult.invalid(
-            f"Invalid JSON in tool call arguments: {jde}. Raw arguments: {tool_args_json}"
-        ).to_tool_message()
+    parsed, validation_error = _validate_call(tool_name, tool_args_json)
+    if validation_error:
+        return validation_error.to_tool_message()
 
     try:
-        result = await skill_manager.dispatch_async(tool_name, args)
+        result = await skill_manager.dispatch_async(tool_name, parsed)
         return result.to_tool_message()
     except Exception as e:
         logger.error("Tool execution failed for %s: %s", tool_name, e)

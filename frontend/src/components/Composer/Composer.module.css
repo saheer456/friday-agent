@@ -3,16 +3,18 @@
   display: flex;
   align-items: flex-end;
   gap: 10px;
-  background: var(--bg2);
+  background: var(--bg-glass-solid);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--outline);
   padding: 10px 14px;
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-glass);
   transition: box-shadow 0.2s ease, border-color 0.2s ease;
 }
 .composer:focus-within {
   border-color: var(--primary-border);
-  box-shadow: 0 0 0 3px var(--primary-dim), var(--shadow);
+  box-shadow: 0 0 0 3px var(--primary-dim), var(--shadow-glass-md);
 }
 
 .textarea {
@@ -30,10 +32,9 @@
   overflow-y: auto;
 }
 .textarea::placeholder {
-  color: rgba(107, 112, 102, 0.5);
+  color: rgba(0, 0, 0, 0.25);
 }
 
-/* ── Buttons ─── */
 .btn {
   width: 40px;
   height: 40px;
@@ -42,24 +43,24 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: transparent;
+  background: var(--bg-glass-light);
   border: 1px solid transparent;
   color: var(--text-muted);
   flex-shrink: 0;
   transition: all 0.18s ease;
 }
 .btn:hover {
-  background: var(--bg2);
+  background: var(--bg-glass-hover);
   border-color: var(--outline);
   color: var(--text);
 }
 
-/* Upload */
 .upload:hover {
   color: var(--amber);
   background: var(--amber-dim);
-  border-color: rgba(112,92,48,0.25);
+  border-color: rgba(251, 191, 36, 0.2);
 }
+
 .uploading {
   color: var(--amber);
   animation: pulse-upload 1s infinite;
@@ -69,7 +70,6 @@
   50%       { opacity: 0.4; }
 }
 
-/* Voice */
 .voiceBtn {
   width: 40px;
   height: 40px;
@@ -77,21 +77,19 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg2);
+  background: var(--bg-glass-light);
   border: 1px solid var(--outline);
   color: var(--text-muted);
   flex-shrink: 0;
   cursor: pointer;
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: var(--shadow-sm);
 }
-
 .voiceBtn:hover {
   background: var(--primary-dim);
   border-color: var(--primary-border);
   color: var(--primary);
   transform: translateY(-1px);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-glass);
 }
 
 .voiceBtnActive {
@@ -102,18 +100,11 @@
 }
 
 @keyframes voice-pulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4);
-  }
-  70% {
-    box-shadow: 0 0 0 8px rgba(220, 38, 38, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0);
-  }
+  0%   { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
+  70%  { box-shadow: 0 0 0 8px rgba(220, 38, 38, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
 }
 
-/* Waveform dots styling */
 .voiceDots {
   display: flex;
   align-items: center;
@@ -139,46 +130,32 @@
   background: #fff;
   animation: waveform 0.8s ease-in-out infinite;
 }
-
-.voiceBtnActive .vd:nth-child(1) {
-  animation-delay: 0.1s;
-}
-.voiceBtnActive .vd:nth-child(2) {
-  animation-delay: 0.25s;
-}
-.voiceBtnActive .vd:nth-child(3) {
-  animation-delay: 0.4s;
-}
+.voiceBtnActive .vd:nth-child(1) { animation-delay: 0.1s; }
+.voiceBtnActive .vd:nth-child(2) { animation-delay: 0.25s; }
+.voiceBtnActive .vd:nth-child(3) { animation-delay: 0.4s; }
 
 @keyframes waveform {
-  0%, 100% {
-    transform: scaleY(0.4);
-  }
-  50% {
-    transform: scaleY(1.4);
-  }
+  0%, 100% { transform: scaleY(0.4); }
+  50%      { transform: scaleY(1.4); }
 }
 
-
-/* Send */
 .send {
   width: 44px;
   height: 44px;
   border-radius: var(--radius-sm);
   background: var(--primary);
-  border-color: var(--primary);
-  color: #fff;
+  border: none;
+  color: #000;
 }
 .send:hover:not(:disabled) {
-  background: #0284c7;
-  box-shadow: 0 4px 14px var(--primary-dim);
+  opacity: 0.88;
+  box-shadow: 0 4px 20px var(--primary-dim);
 }
 .send:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
-/* ── Upload toast ─── */
 .uploadToast {
   position: absolute;
   bottom: calc(100% + 10px);
@@ -187,14 +164,15 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  background: var(--bg1);
+  background: var(--bg-glass-solid);
+  backdrop-filter: blur(12px);
   border: 1px solid var(--outline);
   color: var(--primary);
   font-size: 0.82rem;
   font-weight: 600;
   padding: 8px 16px;
   border-radius: var(--radius-pill);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-glass-md);
   white-space: nowrap;
   animation: toast-in 0.2s ease;
   z-index: 10;
@@ -212,7 +190,6 @@
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
-/* Attached file pills styling */
 .attachedFiles {
   display: flex;
   flex-wrap: wrap;
@@ -225,14 +202,14 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  background: var(--bg2);
+  background: var(--bg-glass-light);
+  backdrop-filter: blur(6px);
   border: 1px solid var(--outline);
   padding: 6px 12px;
   border-radius: var(--radius-pill);
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--text);
-  box-shadow: var(--shadow-sm);
   transition: all 0.15s ease;
 }
 
@@ -263,7 +240,6 @@
   justify-content: center;
   transition: color 0.15s ease;
 }
-
 .filePillRemove:hover {
   color: #ff4d4d;
 }
@@ -272,7 +248,6 @@
   opacity: 0.35;
   cursor: not-allowed;
 }
-
 .unsupported:hover {
   background: transparent;
   border-color: transparent;
@@ -286,10 +261,9 @@
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--text-muted);
-  background: var(--bg2);
+  background: var(--bg-glass-light);
+  backdrop-filter: blur(6px);
   border: 1px solid var(--outline);
   padding: 4px 8px;
   border-radius: 4px;
-  box-shadow: var(--shadow-sm);
 }
-

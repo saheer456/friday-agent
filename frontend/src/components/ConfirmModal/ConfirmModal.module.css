@@ -4,9 +4,9 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -15,12 +15,14 @@
 }
 
 .modal {
-  background: var(--bg-card);
+  background: var(--bg-glass-solid);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--outline);
   border-radius: var(--radius);
-  padding: 24px;
+  padding: 28px;
   width: min(400px, 90vw);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-glass-lg);
   animation: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -46,7 +48,7 @@
 }
 
 .cancelBtn, .confirmBtn {
-  padding: 8px 16px;
+  padding: 9px 18px;
   border-radius: var(--radius-sm);
   font-size: 0.85rem;
   font-weight: 600;
@@ -55,27 +57,24 @@
 }
 
 .cancelBtn {
-  background: transparent;
+  background: var(--bg-glass-light);
   border: 1px solid var(--outline);
   color: var(--text-muted);
 }
-
 .cancelBtn:hover {
-  background: var(--bg2);
+  background: var(--bg-glass-hover);
   color: var(--text);
 }
 
 .confirmBtn {
-  background: #ff4d4d;
-  border: 1px solid #ff4d4d;
+  background: #dc2626;
+  border: 1px solid #dc2626;
   color: #fff;
-  box-shadow: 0 2px 8px rgba(255, 77, 77, 0.2);
 }
-
 .confirmBtn:hover {
-  background: #e04040;
-  border-color: #e04040;
-  box-shadow: 0 4px 12px rgba(255, 77, 77, 0.3);
+  background: #b91c1c;
+  border-color: #b91c1c;
+  box-shadow: 0 4px 16px rgba(220, 38, 38, 0.3);
 }
 
 @keyframes fade-in {

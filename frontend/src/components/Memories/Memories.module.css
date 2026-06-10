@@ -1,10 +1,10 @@
-/* ── Overlay / Panel ─────────────────────────────────────────── */
 .overlay {
   position: fixed;
   inset: 0;
   z-index: 300;
-  background: rgba(0, 0, 0, 0.52);
-  backdrop-filter: blur(6px);
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -17,25 +17,25 @@
 }
 
 .panel {
-  background: var(--bg1);
+  background: var(--bg-glass-solid);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--outline);
   border-radius: var(--radius);
   width: min(680px, 94vw);
   max-height: 86vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow-glass-lg);
   overflow: hidden;
 }
 
-/* ── Header ─────────────────────────────────────────────────── */
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
   border-bottom: 1px solid var(--outline);
-  background: var(--bg);
   flex-shrink: 0;
 }
 
@@ -45,7 +45,6 @@
   gap: 8px;
   color: var(--primary);
 }
-
 .headerTitle h2 {
   font-size: 0.88rem;
   font-weight: 700;
@@ -59,12 +58,12 @@
 }
 
 .btnIcon {
-  background: transparent;
+  background: var(--bg-glass-light);
   border: 1px solid var(--outline);
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 5px 10px;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -72,15 +71,13 @@
   transition: all 0.15s ease;
 }
 .btnIcon:hover {
-  background: var(--bg2);
+  background: var(--bg-glass-hover);
   color: var(--text);
 }
 
-/* ── Tabs ────────────────────────────────────────────────────── */
 .tabs {
   display: flex;
   border-bottom: 1px solid var(--outline);
-  background: var(--bg);
   flex-shrink: 0;
 }
 
@@ -100,14 +97,13 @@
   border-left: none;
   border-right: none;
 }
-.tab:hover { color: var(--text); background: var(--bg1); }
+.tab:hover { color: var(--text); background: var(--bg-glass-hover); }
 .tabActive {
   color: var(--primary);
   border-bottom-color: var(--primary);
-  background: var(--bg1);
+  background: var(--bg-glass-light);
 }
 
-/* ── Memories list ───────────────────────────────────────────── */
 .list {
   flex: 1;
   overflow-y: auto;
@@ -125,7 +121,8 @@
 }
 
 .card {
-  background: var(--bg2);
+  background: var(--bg-glass-light);
+  backdrop-filter: blur(6px);
   border: 1px solid var(--outline);
   border-radius: var(--radius-sm);
   padding: 12px;
@@ -147,7 +144,7 @@
   letter-spacing: 0.5px;
   padding: 2px 8px;
   border-radius: var(--radius-pill);
-  background: rgba(74, 124, 89, 0.12);
+  background: var(--primary-dim);
   color: var(--primary);
   border: 1px solid var(--primary-border);
 }
@@ -190,7 +187,6 @@
   color: var(--text-muted);
 }
 
-/* ── Knowledge Graph pane ────────────────────────────────────── */
 .graphPane {
   flex: 1;
   overflow-y: auto;
@@ -199,14 +195,12 @@
   gap: 0;
 }
 
-/* Search bar */
 .searchBar {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 12px 20px;
   border-bottom: 1px solid var(--outline);
-  background: var(--bg);
   flex-shrink: 0;
 }
 .searchIcon { color: var(--text-muted); flex-shrink: 0; }
@@ -214,18 +208,19 @@
   flex: 1;
   border: 1px solid var(--outline);
   border-radius: var(--radius-sm);
-  padding: 7px 12px;
-  background: var(--bg2);
+  padding: 8px 12px;
+  background: var(--bg-glass-light);
   color: var(--text);
   font-family: inherit;
   font-size: 0.85rem;
+  outline: none;
 }
-.searchInput:focus { outline: 2px solid var(--primary-border); }
+.searchInput:focus { border-color: var(--primary-border); box-shadow: 0 0 0 3px var(--primary-dim); }
 .searchBtn {
-  padding: 7px 14px;
+  padding: 8px 16px;
   border-radius: var(--radius-sm);
   background: var(--primary);
-  color: #fff;
+  color: #000;
   font-size: 0.82rem;
   font-weight: 600;
   border: none;
@@ -234,16 +229,15 @@
 }
 .searchBtn:hover { opacity: 0.88; }
 .searchClear {
-  background: transparent;
+  background: var(--bg-glass-light);
   border: 1px solid var(--outline);
   border-radius: var(--radius-sm);
-  padding: 7px 10px;
+  padding: 8px 12px;
   color: var(--text-muted);
   cursor: pointer;
   font-size: 0.8rem;
 }
 
-/* Sections */
 .graphSection {
   padding: 14px 20px;
   border-bottom: 1px solid var(--outline);
@@ -257,14 +251,14 @@
   margin-bottom: 10px;
 }
 
-/* Node grid */
 .nodeGrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 8px;
 }
 .nodeCard {
-  background: var(--bg2);
+  background: var(--bg-glass-light);
+  backdrop-filter: blur(6px);
   border: 1px solid var(--outline);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
@@ -283,7 +277,7 @@
   padding: 1px 6px;
   border-radius: var(--radius-pill);
   align-self: flex-start;
-  background: rgba(74, 124, 89, 0.12);
+  background: var(--primary-dim);
   color: var(--primary);
   border: 1px solid var(--primary-border);
 }
@@ -307,7 +301,6 @@
   word-break: break-word;
 }
 
-/* Edge list */
 .edgeList {
   display: flex;
   flex-direction: column;
@@ -318,7 +311,7 @@
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  background: var(--bg2);
+  background: var(--bg-glass-light);
   border: 1px solid var(--outline);
   border-radius: var(--radius-sm);
   font-size: 0.78rem;
@@ -329,7 +322,7 @@
   color: var(--text);
   font-family: monospace;
   font-size: 0.75rem;
-  background: var(--bg1);
+  background: rgba(255, 255, 255, 0.5);
   padding: 2px 6px;
   border-radius: 4px;
   border: 1px solid var(--outline);

@@ -36,7 +36,7 @@
   color: #fff;
   border-color: var(--primary);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px var(--primary-dim);
+  box-shadow: 0 4px 16px var(--primary-border);
 }
 
 .chipIcon {

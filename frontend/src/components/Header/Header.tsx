@@ -1,16 +1,18 @@
 import styles from './Header.module.css';
-import { Activity, Database, LogOut, Menu, Trash2 } from 'lucide-react';
+import { Activity, Database, LogOut, Menu, Trash2, Pause, Play } from 'lucide-react';
 
 interface HeaderProps {
   version: string;
   statusText: string;
   isBusy: boolean;
   isSpeaking?: boolean;
+  isPaused?: boolean;
   onClearChat: () => void;
   onToggleTelemetry: () => void;
   onToggleMemories: () => void;
   onLogout: () => void;
   onToggleSidebar?: () => void;
+  onTogglePause?: () => void;
   fullAccess?: boolean;
 }
 
@@ -19,11 +21,13 @@ export function Header({
   statusText,
   isBusy,
   isSpeaking = false,
+  isPaused = false,
   onClearChat,
   onToggleTelemetry,
   onToggleMemories,
   onLogout,
   onToggleSidebar,
+  onTogglePause,
   fullAccess = true,
 }: HeaderProps) {
   return (
@@ -60,6 +64,18 @@ export function Header({
 
       {/* ── Right: actions ─── */}
       <div className={styles.actions}>
+        {isSpeaking && onTogglePause && (
+          <button
+            type="button"
+            className={styles.pauseBtn}
+            onClick={onTogglePause}
+            aria-label={isPaused ? 'Resume audio' : 'Pause audio'}
+            title={isPaused ? 'Resume audio' : 'Pause audio'}
+          >
+            {isPaused ? <Play size={16} /> : <Pause size={16} />}
+          </button>
+        )}
+
         <span className={styles.statusText}>{statusText}</span>
 
         <button

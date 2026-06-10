@@ -4,25 +4,28 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg, #faf6f0);
+  background: #f0f4f8;
   font-family: var(--font-body, "Nunito Sans", system-ui, sans-serif);
 }
+
 .errorBox {
-  background: #fff;
-  border: 1px solid rgba(239,68,68,0.25);
-  border-radius: 16px;
+  background: var(--bg-glass-solid);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: var(--radius);
   padding: 48px 40px;
   max-width: 480px;
   width: 90%;
   text-align: center;
-  box-shadow: 0 8px 40px rgba(239,68,68,0.08);
+  box-shadow: var(--shadow-glass-lg);
 }
+
 .icon {
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  background: rgba(239,68,68,0.08);
-  border: 2px solid rgba(239,68,68,0.25);
+  background: rgba(239, 68, 68, 0.12);
+  border: 2px solid rgba(239, 68, 68, 0.3);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -30,26 +33,30 @@
   font-size: 1.5rem;
   animation: pulse 2.5s ease-in-out infinite;
 }
+
 @keyframes pulse {
   0%, 100% { transform: scale(1); }
   50%       { transform: scale(1.04); }
 }
+
 .errorBox h2 {
   font-family: var(--font-head, Georgia, serif);
   font-size: 1.4rem;
   color: #b91c1c;
   margin-bottom: 8px;
 }
+
 .sub {
   font-size: 0.9rem;
-  color: #6b7066;
+  color: var(--text-muted);
   margin-bottom: 20px;
 }
+
 .trace {
-  background: #1e1e1e;
-  color: #fca5a5;
+  background: rgba(0, 0, 0, 0.03);
+  color: #dc2626;
   padding: 14px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   font-family: "Courier New", monospace;
   font-size: 0.78rem;
   text-align: left;
@@ -58,17 +65,18 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+
 .btn {
-  background: rgba(239,68,68,0.08);
-  border: 1px solid rgba(239,68,68,0.25);
+  background: rgba(239, 68, 68, 0.10);
+  border: 1px solid rgba(239, 68, 68, 0.25);
   color: #dc2626;
   padding: 10px 24px;
-  border-radius: 100px;
+  border-radius: var(--radius-pill);
   font-size: 0.9rem;
   font-weight: 600;
   transition: all 0.18s ease;
 }
 .btn:hover {
-  background: rgba(239,68,68,0.15);
-  border-color: rgba(239,68,68,0.4);
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(239, 68, 68, 0.4);
 }

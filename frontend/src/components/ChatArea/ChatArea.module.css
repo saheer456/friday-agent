@@ -4,7 +4,6 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  background: var(--bg);
 }
 
 .chatScroll {
@@ -12,10 +11,8 @@
   overflow-y: auto;
   padding: 32px 40px;
   scroll-behavior: smooth;
-  transition: outline 0.2s ease;
 }
 
-/* ── Welcome (minimal — greeting streams in from AI) ─── */
 .welcome {
   height: 100%;
   display: flex;
@@ -26,17 +23,18 @@
 }
 
 .welcomeOrb {
-  width: 48px;
-  height: 48px;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
   background: var(--primary-dim);
   border: 2px solid var(--primary-border);
+  box-shadow: 0 0 30px var(--primary-dim);
   animation: orb-pulse 1.6s ease-in-out infinite alternate;
 }
 
 @keyframes orb-pulse {
-  from { box-shadow: 0 0 8px rgba(56, 189, 248, 0.15); transform: scale(0.96); }
-  to   { box-shadow: 0 0 24px rgba(56, 189, 248, 0.35); transform: scale(1.04); }
+  from { box-shadow: 0 0 12px rgba(2, 132, 199, 0.12); transform: scale(0.96); }
+  to   { box-shadow: 0 0 40px rgba(2, 132, 199, 0.25); transform: scale(1.04); }
 }
 
 .welcomeLine {
@@ -48,7 +46,6 @@
   letter-spacing: 0.5px;
 }
 
-/* ── Messages ─── */
 .msg {
   max-width: 80%;
   margin-bottom: 28px;
@@ -68,12 +65,14 @@
 }
 
 .msgBody {
-  padding: 16px 20px;
+  padding: 18px 22px;
   border-radius: var(--radius);
   line-height: 1.65;
   font-size: 0.95rem;
   word-wrap: break-word;
-  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-glass);
 }
 
 /* User */
@@ -85,7 +84,7 @@
   color: var(--primary);
 }
 .user .msgBody {
-  background: var(--primary-dim);
+  background: rgba(2, 132, 199, 0.06);
   border: 1px solid var(--primary-border);
   border-bottom-right-radius: 4px;
   color: var(--text);
@@ -112,20 +111,18 @@
   flex-shrink: 0;
 }
 .ai .msgBody {
-  background: var(--bg-card);
+  background: var(--bg-glass);
   border: 1px solid var(--outline);
   border-bottom-left-radius: 4px;
   color: var(--text);
 }
 
-/* Error message */
 .ai .msgBody:has(> span.errorMsg) {
-  background: rgba(239, 68, 68, 0.06);
-  border-color: rgba(239, 68, 68, 0.25);
+  background: rgba(239, 68, 68, 0.04);
+  border-color: rgba(239, 68, 68, 0.20);
   color: #b91c1c;
 }
 
-/* Markdown content */
 .msgBody p { margin: 0 0 0.8em; }
 .msgBody p:last-child { margin-bottom: 0; }
 .msgBody h1, .msgBody h2, .msgBody h3 {
@@ -140,7 +137,7 @@
 .msgBody li { margin-bottom: 0.3em; }
 .msgBody strong { color: var(--text); font-weight: 700; }
 .msgBody pre {
-  background: var(--bg2);
+  background: var(--code-bg);
   border: 1px solid var(--outline);
   padding: 14px;
   border-radius: var(--radius-sm);
@@ -157,11 +154,10 @@
 }
 .msgBody pre code {
   background: transparent;
-  color: var(--text);
+  color: var(--code-text);
   padding: 0;
 }
 
-/* Streaming cursor */
 .cursor {
   display: inline-block;
   width: 2.5px;
@@ -176,8 +172,6 @@
   0%, 100% { opacity: 0.25; }
   50% { opacity: 1; }
 }
-
-
 
 .msgHeader {
   display: flex;
@@ -211,17 +205,14 @@
   transition: all 0.2s ease;
   opacity: 0;
 }
-
 .msg:hover .copyBtn {
   opacity: 1;
 }
-
 .copyBtn:hover {
-  background: var(--border);
+  background: var(--bg-glass-hover);
   color: var(--primary);
 }
 
-/* ── Date separators ───────────────────────────────────── */
 .dateSeparator {
   display: flex;
   align-items: center;
@@ -244,7 +235,6 @@
   white-space: nowrap;
 }
 
-/* ── Load-more sentinel (infinite scroll) ──────────────── */
 .loadMoreSentinel {
   display: flex;
   justify-content: center;
@@ -265,7 +255,6 @@
   to { transform: rotate(360deg); }
 }
 
-/* ── Loading history overlay ───────────────────────────── */
 .loadingHistory {
   display: flex;
   align-items: center;
@@ -278,12 +267,10 @@
   min-height: 200px;
 }
 
-/* ── Streaming indicator ───────────────────────────────── */
 .streaming {
   opacity: 0.85;
 }
 
-/* ── Welcome subtitle ──────────────────────────────────── */
 .welcomeSub {
   font-size: 0.8rem;
   color: var(--text-muted);

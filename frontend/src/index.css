@@ -1,54 +1,47 @@
 :root {
-  /* F.R.I.D.A.Y Minimal Dark Theme */
-  --bg:          #08090a;  /* Neutral deep dark */
-  --bg1:         #111215;  /* Dark card/panel background */
-  --bg2:         #17191d;  /* Darker input/button bg */
-  --bg-card:     rgba(255, 255, 255, 0.02);
-  
-  --primary:     #38bdf8;  /* Sleek sky blue for actions */
-  --primary-dim: rgba(56, 189, 248, 0.08);
-  --primary-border: rgba(56, 189, 248, 0.2);
-  
-  --accent:      #6366f1;  /* Elegant indigo */
-  --accent-dim:  rgba(99, 102, 241, 0.08);
-  --accent-border: rgba(99, 102, 241, 0.18);
-  
-  --amber:       #e2e8f0;  /* Standard text code highlight */
-  --amber-dim:   rgba(255, 255, 255, 0.04);
-  
-  --text:        #f8fafc;  /* Clean white slate */
-  --text-muted:  #64748b;  /* Neutral slate gray */
-  --outline:     rgba(255, 255, 255, 0.07);
-  
-  --shadow:      0 4px 24px rgba(0, 0, 0, 0.4);
-  --shadow-md:   0 8px 32px rgba(0, 0, 0, 0.6);
+  /* ── Light Glassmorphism Theme ──────────────────────────── */
+  --bg-glass:        rgba(255, 255, 255, 0.55);
+  --bg-glass-solid:  rgba(255, 255, 255, 0.78);
+  --bg-glass-light:  rgba(255, 255, 255, 0.40);
+  --bg-glass-hover:  rgba(255, 255, 255, 0.65);
+  --bg-glass-active: rgba(255, 255, 255, 0.85);
 
-  /* Code block */
-  --code-bg:     #0d0e12;
-  --code-border: rgba(255, 255, 255, 0.05);
-  --code-text:   #f1f5f9;
-  --code-header: #121318;
+  --primary:         #0284c7;
+  --primary-dim:     rgba(2, 132, 199, 0.08);
+  --primary-border:  rgba(2, 132, 199, 0.18);
 
-  /* Callout palette (Minimal versions) */
-  --callout-note:      rgba(56, 189, 248, 0.05);
-  --callout-note-border: #38bdf8;
-  --callout-tip:       rgba(99, 102, 241, 0.05);
-  --callout-tip-border: #6366f1;
-  --callout-warn:      rgba(245, 158, 11, 0.05);
-  --callout-warn-border: #f59e0b;
-  --callout-caution:   rgba(239, 68, 68, 0.05);
-  --callout-caution-border: #ef4444;
-  --callout-important: rgba(59, 130, 246, 0.05);
-  --callout-important-border: #3b82f6;
+  --accent:          #6366f1;
+  --accent-dim:      rgba(99, 102, 241, 0.07);
+  --accent-border:   rgba(99, 102, 241, 0.15);
 
-  /* Shape */
-  --radius:      10px;
-  --radius-sm:   6px;
-  --radius-pill: 9999px;
+  --amber:           #d97706;
+  --amber-dim:       rgba(217, 119, 6, 0.08);
 
-  /* Typography */
+  --text:            #0f172a;
+  --text-muted:      #64748b;
+  --outline:         rgba(0, 0, 0, 0.08);
+  --outline-hover:   rgba(0, 0, 0, 0.12);
+  --outline-active:  rgba(0, 0, 0, 0.16);
+
+  --radius:          12px;
+  --radius-sm:       8px;
+  --radius-pill:     9999px;
+
   --font-head: "Outfit", system-ui, sans-serif;
   --font-body: "Plus Jakarta Sans", system-ui, sans-serif;
+
+  /* Glass shadow — lighter for light theme */
+  --shadow-glass:    0 2px 12px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(255, 255, 255, 0.5);
+  --shadow-glass-md: 0 8px 32px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(255, 255, 255, 0.5);
+  --shadow-glass-lg: 0 16px 48px rgba(0, 0, 0, 0.10), 0 0 0 1px rgba(255, 255, 255, 0.6);
+
+  /* Extra glassmorphism variables */
+  --bg1:             rgba(255, 255, 255, 0.45);
+  --bg2:             rgba(255, 255, 255, 0.50);
+  --code-bg:         rgba(248, 250, 252, 0.85);
+  --code-header:     rgba(241, 245, 249, 0.90);
+  --code-text:       #1e293b;
+  --code-border:     rgba(0, 0, 0, 0.08);
 }
 
 *,
@@ -59,16 +52,24 @@
   padding: 0;
 }
 
-html,
-body {
+html, body {
   height: 100%;
   font-family: var(--font-body);
   font-size: 14px;
   line-height: 1.55;
-  background: var(--bg);
   color: var(--text);
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
+}
+
+body {
+  background: #f0f4f8;
+  background-image:
+    radial-gradient(ellipse at 20% 50%, rgba(2, 132, 199, 0.05) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 20%, rgba(99, 102, 241, 0.03) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 80%, rgba(2, 132, 199, 0.03) 0%, transparent 50%),
+    radial-gradient(ellipse at 100% 100%, rgba(99, 102, 241, 0.02) 0%, transparent 50%);
+  background-attachment: fixed;
 }
 
 #root {
@@ -84,8 +85,12 @@ button {
   font-size: inherit;
 }
 
-/* Scrollbars - refined & minimal */
-::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--outline); border-radius: var(--radius-pill); }
-::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.10); border-radius: var(--radius-pill); }
+::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.20); }
+
+::selection {
+  background: var(--primary);
+  color: #fff;
+}

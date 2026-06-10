@@ -105,6 +105,10 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from backend import brain
+from backend.services.state import get_app_state
+from backend.services.tracing import set_trace_id, trace_id_var
+
+app_state = get_app_state()
 
 logger.info("[BOOT] brain imported")
 
@@ -137,9 +141,9 @@ def _llm_stack_info() -> dict:
 def _readiness_info() -> dict:
     """Live readiness flags ΓÇö used by the frontend status badges."""
     return {
-        "memory_ready": True,
-        "tts_ready": _tts_ready.is_set(),
-        "stt_ready": _stt_ready,
+        "memory_ready": app_state.memory_ready,
+        "tts_ready": app_state.is_tts_ready(),
+        "stt_ready": app_state.stt_ready,
     }
 
 
@@ -229,9 +233,9 @@ async def _assert_session_access(session_id: str, user: dict) -> None:
 
 
 def _ui_info() -> dict:
-    version = (os.getenv("FRIDAY_UI_VERSION") or "v4.3.0").strip()
+    version = (os.getenv("FRIDAY_UI_VERSION") or "v4.3.1").strip()
     if not version:
-        version = "v4.3.0"
+        version = "v4.3.1"
     return {"version": version}
 
 
@@ -325,12 +329,16 @@ logger.info("[BOOT] FastAPI app created")
 async def add_trace_id_middleware(request: Request, call_next):
     trace_id = str(uuid.uuid4())
     request.state.trace_id = trace_id
+    # Propagate trace_id via contextvar for async boundaries
+    trace_token = set_trace_id(trace_id)
     start = asyncio.get_event_loop().time()
     try:
         response = await call_next(request)
     except Exception:
         # Let exception handlers capture and log
         raise
+    finally:
+        trace_id_var.reset(trace_token)
     duration = (asyncio.get_event_loop().time() - start) * 1000.0
     # Attach trace id header for client debugging
     try:
@@ -423,21 +431,15 @@ app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 # Runtime readiness flags
 # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
-# threading.Event is explicitly thread-safe (unlike a plain bool)
-_tts_ready = threading.Event()
-_stt_ready = True
-_memory_ready = False
-_whisper_model = None
-_whisper_lock = asyncio.Lock()
+# State managed via AppState service (thread-safe, Redis-ready for multi-worker)
+# See backend/services/state.py
 
 # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 # Safe memory initialization
 # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 async def initialize_memory():
-    global _memory_ready
-
-    if _memory_ready:
+    if app_state.memory_ready:
         return
 
     try:
@@ -449,7 +451,7 @@ async def initialize_memory():
 
         await MemoryManager.initialize()
 
-        _memory_ready = True
+        app_state.memory_ready = True
 
         print("[MEMORY] Γ£ô Memory initialized")
 
@@ -465,7 +467,7 @@ def _load_tts():
         print("[TTS] Loading Kokoro...")
         from backend.tts import _get_kokoro
         _get_kokoro()
-        _tts_ready.set()  # thread-safe Event
+        app_state.set_tts_ready()
         print("[TTS] Γ£ô Kokoro ready")
     except Exception:
         print("[TTS] Kokoro FAILED")
@@ -476,7 +478,7 @@ async def _ping_edge_tts():
         print("[TTS] Pinging Edge-TTS...")
         from backend.tts import synthesize
         await synthesize("Hello")
-        _tts_ready.set()  # thread-safe Event
+        app_state.set_tts_ready()
         print("[TTS] Γ£ô Edge-TTS ready")
     except Exception:
         print("[TTS] Edge-TTS FAILED")
@@ -680,15 +682,15 @@ async def health_detailed(_auth: dict = Depends(verify_auth)):
         "status": "ok",
         "memory": {
             "enabled": memory_enabled,
-            "ready": _memory_ready,
+            "ready": app_state.memory_ready,
         },
         "tts": {
             "backend": os.getenv("FRIDAY_TTS_BACKEND", "auto"),
-            "ready": _tts_ready.is_set(),
+            "ready": app_state.is_tts_ready(),
         },
         "stt": {
-            "ready": _stt_ready,
-            "whisper_cached": _whisper_model is not None,
+            "ready": app_state.stt_ready,
+            "whisper_cached": app_state.whisper_model is not None,
         },
         "providers": provider_statuses,
     }
@@ -784,9 +786,9 @@ async def system_info(_auth: dict = Depends(verify_user_auth)):
 
     # Compose readiness
     readiness = {
-        "memory_ready": _memory_ready,
-        "tts_ready": _tts_ready.is_set() or tts_ok,
-        "stt_ready": _stt_ready,
+        "memory_ready": app_state.memory_ready,
+        "tts_ready": app_state.is_tts_ready() or tts_ok,
+        "stt_ready": app_state.stt_ready,
         "vector_store": vector_ok,
         "supabase": supabase_ok,
         "providers": provider_health,
@@ -1199,16 +1201,15 @@ async def speech_to_text(
     try:
         with open(path, "wb") as f:
             f.write(data)
-        global _whisper_model
-        async with _whisper_lock:
-            if _whisper_model is None:
+        async with app_state.whisper_lock:
+            if app_state.whisper_model is None:
                 from faster_whisper import WhisperModel
-                _whisper_model = WhisperModel(
+                app_state.whisper_model = WhisperModel(
                     os.getenv("FRIDAY_WHISPER_MODEL", "small"),
                     device=os.getenv("FRIDAY_WHISPER_DEVICE", "cpu"),
                     compute_type=os.getenv("FRIDAY_WHISPER_COMPUTE", "int8"),
                 )
-            model = _whisper_model
+            model = app_state.whisper_model
         segs, _ = model.transcribe(
             path,
             language="en",
@@ -1271,10 +1272,10 @@ async def speak_endpoint(body: TTSBody, _auth: dict = Depends(verify_auth)):
     if not raw or len(raw) < 2:
         return RawResponse(content=b"", media_type="audio/mpeg")
 
-    # Step 1: convert Markdown ΓåÆ spoken prose via a fast LLM call
+    # Step 1: convert Markdown ΓåÆ spoken prose via a fast provider call
     spoken = raw  # fallback if LLM fails
-    api_key = (os.getenv("GROQ_API_KEY") or "").strip()
-    if api_key and "your_" not in api_key.lower():
+    try:
+        from backend.providers import provider_manager
         prompt = (
             "Convert the following text into natural spoken English, as if you are speaking it aloud. "
             "Rules: remove ALL markdown (no **, no ##, no -, no backticks, no numbered lists). "
@@ -1285,23 +1286,15 @@ async def speak_endpoint(body: TTSBody, _auth: dict = Depends(verify_auth)):
             "Output ONLY the spoken version, nothing else.\n\n"
             f"Text to convert:\n{raw}"
         )
-        try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                r = await client.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    json={
-                        "model": "llama-3.1-8b-instant",   # fastest Groq model
-                        "messages": [{"role": "user", "content": prompt}],
-                        "max_tokens": 400,
-                        "temperature": 0.2,
-                        "stream": False,
-                    },
-                )
-                r.raise_for_status()
-                spoken = r.json()["choices"][0]["message"]["content"].strip()
-        except Exception:
-            spoken = clean_for_speech(raw)   # regex fallback
+        resp = await provider_manager.generate(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=400,
+        )
+        if resp and resp.content:
+            spoken = resp.content.strip()
+    except Exception:
+        spoken = clean_for_speech(raw)   # regex fallback
 
     # Step 2: synthesize
     spoken = clean_for_speech(spoken)   # final safety pass

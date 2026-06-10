@@ -72,7 +72,7 @@ async def _get_context(user_message: str, session_id: str = "default-session") -
         if rag_result and rag_result.strip():
             parts.append(f"Personal data context:\n{rag_result}")
     except Exception as e:
-        logger.debug(f"RAG search error: {e}")
+        logger.warning(f"RAG search error for query '{user_message[:50]}': {e}")
 
     try:
         from .memory import chat_history
@@ -85,7 +85,7 @@ async def _get_context(user_message: str, session_id: str = "default-session") -
             if file_hits:
                 parts.append("UPLOADED DOCUMENT CONTEXT:\n" + "\n\n---\n".join(file_hits))
     except Exception as e:
-        logger.debug(f"File search error: {e}")
+        logger.warning(f"File search error for session '{session_id}': {e}")
 
     return "\n\n".join(parts)
 
@@ -154,8 +154,9 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
                         },
                     )
         except Exception as e:
-            logger.error(f"Context retrieval error: {e}")
+            logger.error(f"Context retrieval error: {e}", exc_info=True)
             passive_context = ""
+            yield ("error", f"[Context retrieval failed: {e}]")
         logger.debug("[Turn] context_chars=%d session=%s", len(passive_context or ""), session_id)
 
         # Load from DB if in-memory history is empty
@@ -389,6 +390,7 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
 
             if last_error and not full_response and not tool_calls_accumulator:
                 msg = "I encountered a temporary issue. Please try again."
+                logger.error(f"Provider stream failed: {last_error}")
                 session_history.append({"role": "assistant", "content": msg})
                 if emit_phases:
                     yield ("phase", {"id": "fault", "title": "Subsystem fault", "detail": last_error})

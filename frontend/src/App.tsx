@@ -44,7 +44,7 @@ function App() {
     if (!busy) fetchSystem();
   }, [fetchSystem]);
 
-  const { isRecording, isPlaying, toggleRecording, stopAudio, queueTTS, sttSupported } = useVoice(
+  const { isRecording, isPlaying, isPaused, toggleRecording, stopAudio, togglePause, queueTTS, sttSupported } = useVoice(
     (speechText) => {
       setInterimText('');
       const finalMsg = (initialComposerValue.trim() + ' ' + speechText.trim()).trim();
@@ -217,7 +217,7 @@ function App() {
   // Block UI when frontend and backend UI versions mismatch to avoid state issues
   if (showVersionMismatch && system) {
     return (
-      <div style={{position:'fixed', inset:0, background:'#0b0b0b', color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', padding:20, zIndex:9999}}>
+      <div style={{position:'fixed', inset:0, background:'#f0f4f8', color:'#0f172a', display:'flex', alignItems:'center', justifyContent:'center', padding:20, zIndex:9999}}>
         <div style={{maxWidth:700, textAlign:'center'}}>
           <h1 style={{marginBottom:8}}>Version mismatch detected</h1>
           <p style={{opacity:0.9}}>Frontend version <strong>{frontendVersion}</strong> differs from backend UI version <strong>{system.ui?.version}</strong>.</p>
@@ -297,11 +297,13 @@ function App() {
           statusText={statusText}
           isBusy={chatBusy}
           isSpeaking={isPlaying}
+          isPaused={isPaused}
           onClearChat={() => setShowClearConfirm(true)}
           onToggleTelemetry={() => setTelemetryOpen(o => !o)}
           onToggleMemories={() => setMemoriesOpen(o => !o)}
           onLogout={handleLogout}
           onToggleSidebar={() => setSidebarOpen(o => !o)}
+          onTogglePause={togglePause}
           fullAccess={hasFullAccess}
         />
 

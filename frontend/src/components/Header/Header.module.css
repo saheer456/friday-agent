@@ -1,19 +1,19 @@
-/* ── Compact header bar ───────────────────────────────────── */
 .header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 12px;
-  height: 52px;
-  min-height: 52px;
-  background: var(--bg1);
+  padding: 0 16px;
+  height: 56px;
+  min-height: 56px;
+  background: var(--bg-glass-solid);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--outline);
   flex-shrink: 0;
   position: relative;
   z-index: 10;
 }
 
-/* ── Sections ─── */
 .left {
   display: flex;
   align-items: center;
@@ -23,7 +23,7 @@
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex: 1;
   justify-content: center;
 }
@@ -31,24 +31,22 @@
 .actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
-/* ── Title ─── */
 .title {
   font-family: var(--font-head);
-  font-size: 0.95rem;
+  font-size: 1rem;
   font-weight: 700;
-  letter-spacing: 2.5px;
+  letter-spacing: 3px;
   color: var(--text);
   margin: 0;
   user-select: none;
 }
 
-/* ── Version pill ─── */
 .versionPill {
-  font-size: 0.65rem;
+  font-size: 0.62rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.8px;
@@ -59,7 +57,6 @@
   border-radius: var(--radius-pill);
 }
 
-/* ── Speaking / busy dot ─── */
 .speakDot {
   width: 8px;
   height: 8px;
@@ -85,11 +82,10 @@
 }
 
 @keyframes dot-speak {
-  from { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.4); transform: scale(0.9); }
-  to   { box-shadow: 0 0 0 5px rgba(56, 189, 248, 0);  transform: scale(1.1); }
+  from { box-shadow: 0 0 0 0 rgba(2, 132, 199, 0.4); transform: scale(0.9); }
+  to   { box-shadow: 0 0 0 5px rgba(2, 132, 199, 0);  transform: scale(1.1); }
 }
 
-/* ── Status text ─── */
 .statusText {
   font-size: 0.72rem;
   font-weight: 600;
@@ -101,32 +97,58 @@
   text-overflow: ellipsis;
 }
 
-/* ── Icon buttons ─── */
+/* ── Glass icon button ─── */
 .iconBtn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
-  background: transparent;
-  border: none;
+  background: var(--bg-glass-light);
+  border: 1px solid transparent;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: all 0.18s ease;
 }
-
 .iconBtn:hover {
-  background: var(--bg2);
+  background: var(--bg-glass-hover);
+  border-color: var(--outline);
   color: var(--text);
 }
 
 .logoutBtn:hover {
   color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.25);
   background: rgba(239, 68, 68, 0.08);
 }
 
-/* ── Mobile ─────────────────────────────────────────────── */
+/* ── Pause button ─── */
+.pauseBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  color: var(--primary);
+  background: var(--primary-dim);
+  border: 1px solid var(--primary-border);
+  cursor: pointer;
+  transition: all 0.18s ease;
+  animation: pausePulse 2s ease-in-out infinite;
+}
+.pauseBtn:hover {
+  background: var(--primary);
+  color: #000;
+  border-color: var(--primary);
+}
+
+@keyframes pausePulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--primary-border); }
+  50% { box-shadow: 0 0 12px 2px var(--primary-dim); }
+}
+
 @media (max-width: 600px) {
   .statusText {
     display: none;
