@@ -19,8 +19,8 @@
   padding: 32px;
   border-radius: var(--radius);
   background: var(--bg-glass-solid);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: var(--glass-backdrop-heavy);
+  -webkit-backdrop-filter: var(--glass-backdrop-heavy);
   border: 1px solid var(--outline);
   box-shadow: var(--shadow-glass-lg);
   display: flex;
@@ -116,7 +116,8 @@
   border-bottom: 1px solid rgba(217, 119, 6, 0.12);
   color: var(--amber);
   font-size: 0.82rem;
-  backdrop-filter: blur(8px);
+  backdrop-filter: var(--glass-backdrop-light);
+  -webkit-backdrop-filter: var(--glass-backdrop-light);
 }
 
 .footer {
@@ -129,7 +130,8 @@
   letter-spacing: 2px;
   border-top: 1px solid var(--outline);
   background: var(--bg-glass-solid);
-  backdrop-filter: blur(12px);
+  backdrop-filter: var(--glass-backdrop);
+  -webkit-backdrop-filter: var(--glass-backdrop);
 }
 
 @media (max-width: 768px) {

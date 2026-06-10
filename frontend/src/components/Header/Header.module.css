@@ -6,8 +6,8 @@
   height: 56px;
   min-height: 56px;
   background: var(--bg-glass-solid);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: var(--glass-backdrop);
+  -webkit-backdrop-filter: var(--glass-backdrop);
   border-bottom: 1px solid var(--outline);
   flex-shrink: 0;
   position: relative;

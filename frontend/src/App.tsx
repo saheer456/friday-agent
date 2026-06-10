@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Header } from './components/Header/Header';
 import { ChatArea } from './components/ChatArea/ChatArea';
 import { Composer } from './components/Composer/Composer';
@@ -32,7 +32,7 @@ function App() {
   const [authNotice, setAuthNotice] = useState('');
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   // Version mismatch guard
-  const [showVersionMismatch, setShowVersionMismatch] = useState(false);
+  const handleSendRef = useRef<((text: string, isVoiceMode: boolean) => Promise<void>) | null>(null);
   const frontendVersion = (import.meta.env.VITE_UI_VERSION as string) || '';
   const limitedMode = loginEnabled && isAuthenticated && !hasFullAccess;
 
@@ -51,7 +51,7 @@ function App() {
       setComposerValue('');
       setInitialComposerValue('');
       if (finalMsg) {
-        handleSend(finalMsg, true);
+        handleSendRef.current?.(finalMsg, true);
       }
     },
     (speechText) => {
@@ -89,11 +89,15 @@ function App() {
     isLoadingSession,
   } = useChat(handleStatusChange, hasFullAccess ? queueTTS : () => {}, { limitedMode });
 
-  const handleSend = async (text: string, isVoiceMode: boolean) => {
+  const handleSend = useCallback(async (text: string, isVoiceMode: boolean) => {
     if (chatBusy) return;
     stopAudio();
     await sendMessage(text, isVoiceMode);
-  };
+  }, [chatBusy, stopAudio, sendMessage]);
+
+  useEffect(() => {
+    handleSendRef.current = handleSend;
+  }, [handleSend]);
 
   const handleUpload = async (file: File) => {
     const data = await uploadState.uploadFile(file, activeSessionId);
@@ -154,7 +158,9 @@ function App() {
   }, []);
 
   useEffect(() => {
-    refreshAuth();
+    setTimeout(() => {
+      refreshAuth();
+    }, 0);
 
     if (!supabase) return;
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
@@ -164,16 +170,8 @@ function App() {
   }, [refreshAuth]);
 
   // Check for mismatched frontend/backend UI versions and block if necessary
-  useEffect(() => {
-    if (system && frontendVersion) {
-      const serverVersion = system.ui?.version || '';
-      if (serverVersion && serverVersion !== frontendVersion) {
-        setShowVersionMismatch(true);
-      } else {
-        setShowVersionMismatch(false);
-      }
-    }
-  }, [system, frontendVersion]);
+  const serverVersion = system?.ui?.version || '';
+  const showVersionMismatch = Boolean(serverVersion && frontendVersion && serverVersion !== frontendVersion);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();

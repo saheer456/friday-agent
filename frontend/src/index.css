@@ -1,10 +1,10 @@
 :root {
-  /* ── Light Glassmorphism Theme ──────────────────────────── */
-  --bg-glass:        rgba(255, 255, 255, 0.55);
-  --bg-glass-solid:  rgba(255, 255, 255, 0.78);
-  --bg-glass-light:  rgba(255, 255, 255, 0.40);
-  --bg-glass-hover:  rgba(255, 255, 255, 0.65);
-  --bg-glass-active: rgba(255, 255, 255, 0.85);
+  /* ── Ultra-Premium iOS Apple Glass Theme ──────────────────────────── */
+  --bg-glass:        rgba(255, 255, 255, 0.38);
+  --bg-glass-solid:  rgba(255, 255, 255, 0.75);
+  --bg-glass-light:  rgba(255, 255, 255, 0.22);
+  --bg-glass-hover:  rgba(255, 255, 255, 0.50);
+  --bg-glass-active: rgba(255, 255, 255, 0.62);
 
   --primary:         #0284c7;
   --primary-dim:     rgba(2, 132, 199, 0.08);
@@ -19,29 +19,44 @@
 
   --text:            #0f172a;
   --text-muted:      #64748b;
-  --outline:         rgba(0, 0, 0, 0.08);
-  --outline-hover:   rgba(0, 0, 0, 0.12);
-  --outline-active:  rgba(0, 0, 0, 0.16);
+  
+  /* Specular thin white borders instead of dark borders */
+  --outline:         rgba(255, 255, 255, 0.45);
+  --outline-hover:   rgba(255, 255, 255, 0.60);
+  --outline-active:  rgba(255, 255, 255, 0.75);
 
-  --radius:          12px;
-  --radius-sm:       8px;
+  --radius:          16px; /* iOS curves are more rounded */
+  --radius-sm:       10px;
   --radius-pill:     9999px;
 
   --font-head: "Outfit", system-ui, sans-serif;
   --font-body: "Plus Jakarta Sans", system-ui, sans-serif;
 
-  /* Glass shadow — lighter for light theme */
-  --shadow-glass:    0 2px 12px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(255, 255, 255, 0.5);
-  --shadow-glass-md: 0 8px 32px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(255, 255, 255, 0.5);
-  --shadow-glass-lg: 0 16px 48px rgba(0, 0, 0, 0.10), 0 0 0 1px rgba(255, 255, 255, 0.6);
+  /* Specular Apple shadows with inner white specular stroke */
+  --shadow-glass:    inset 0 1px 1px 0 rgba(255, 255, 255, 0.65),
+                     0 4px 16px rgba(15, 23, 42, 0.04),
+                     0 1px 2px rgba(15, 23, 42, 0.02);
+                     
+  --shadow-glass-md: inset 0 1px 2px 0 rgba(255, 255, 255, 0.75),
+                     0 8px 32px rgba(15, 23, 42, 0.06),
+                     0 1px 3px rgba(15, 23, 42, 0.03);
+                     
+  --shadow-glass-lg: inset 0 1px 3px 0 rgba(255, 255, 255, 0.85),
+                     0 16px 48px rgba(15, 23, 42, 0.10),
+                     0 2px 4px rgba(15, 23, 42, 0.05);
+
+  /* Unified glass backdrop filter tokens */
+  --glass-backdrop:        blur(24px) saturate(190%);
+  --glass-backdrop-heavy:  blur(32px) saturate(220%);
+  --glass-backdrop-light:  blur(12px) saturate(145%);
 
   /* Extra glassmorphism variables */
-  --bg1:             rgba(255, 255, 255, 0.45);
-  --bg2:             rgba(255, 255, 255, 0.50);
-  --code-bg:         rgba(248, 250, 252, 0.85);
-  --code-header:     rgba(241, 245, 249, 0.90);
-  --code-text:       #1e293b;
-  --code-border:     rgba(0, 0, 0, 0.08);
+  --bg1:             rgba(255, 255, 255, 0.28);
+  --bg2:             rgba(255, 255, 255, 0.38);
+  --code-bg:         rgba(255, 255, 255, 0.65);
+  --code-header:     rgba(255, 255, 255, 0.80);
+  --code-text:       #0f172a;
+  --code-border:     rgba(255, 255, 255, 0.40);
 }
 
 *,
@@ -63,12 +78,14 @@ html, body {
 }
 
 body {
-  background: #f0f4f8;
+  background: #f3f6fa;
+  /* Ultra-vibrant iOS 18 mesh gradient background */
   background-image:
-    radial-gradient(ellipse at 20% 50%, rgba(2, 132, 199, 0.05) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 20%, rgba(99, 102, 241, 0.03) 0%, transparent 50%),
-    radial-gradient(ellipse at 50% 80%, rgba(2, 132, 199, 0.03) 0%, transparent 50%),
-    radial-gradient(ellipse at 100% 100%, rgba(99, 102, 241, 0.02) 0%, transparent 50%);
+    radial-gradient(circle at 10% 20%, rgba(2, 132, 199, 0.16) 0%, transparent 45%),
+    radial-gradient(circle at 90% 10%, rgba(99, 102, 241, 0.14) 0%, transparent 45%),
+    radial-gradient(circle at 50% 85%, rgba(236, 72, 153, 0.09) 0%, transparent 50%),
+    radial-gradient(circle at 80% 80%, rgba(56, 189, 248, 0.12) 0%, transparent 40%),
+    radial-gradient(circle at 0% 100%, rgba(99, 102, 241, 0.12) 0%, transparent 50%);
   background-attachment: fixed;
 }
 

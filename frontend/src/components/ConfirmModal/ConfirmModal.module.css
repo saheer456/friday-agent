@@ -5,8 +5,8 @@
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: var(--glass-backdrop-light);
+  -webkit-backdrop-filter: var(--glass-backdrop-light);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -16,8 +16,8 @@
 
 .modal {
   background: var(--bg-glass-solid);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: var(--glass-backdrop-heavy);
+  -webkit-backdrop-filter: var(--glass-backdrop-heavy);
   border: 1px solid var(--outline);
   border-radius: var(--radius);
   padding: 28px;

@@ -804,7 +804,7 @@ async def system_info(_auth: dict = Depends(verify_user_auth)):
 
 
 @app.post("/api/chat/stream")
-@limiter.limit("30/minute")
+@limiter.limit("120/minute")
 async def chat_stream(request: Request, body: ChatBody, _auth: dict = Depends(verify_auth)):
     """SSE: phase + token + error events, then `[DONE]`."""
     await _assert_session_access(body.session_id, _auth)

@@ -3,8 +3,8 @@
   inset: 0;
   z-index: 300;
   background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: var(--glass-backdrop-light);
+  -webkit-backdrop-filter: var(--glass-backdrop-light);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -18,8 +18,8 @@
 
 .panel {
   background: var(--bg-glass-solid);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: var(--glass-backdrop-heavy);
+  -webkit-backdrop-filter: var(--glass-backdrop-heavy);
   border: 1px solid var(--outline);
   border-radius: var(--radius);
   width: min(680px, 94vw);
@@ -122,7 +122,8 @@
 
 .card {
   background: var(--bg-glass-light);
-  backdrop-filter: blur(6px);
+  backdrop-filter: var(--glass-backdrop-light);
+  -webkit-backdrop-filter: var(--glass-backdrop-light);
   border: 1px solid var(--outline);
   border-radius: var(--radius-sm);
   padding: 12px;
@@ -258,7 +259,8 @@
 }
 .nodeCard {
   background: var(--bg-glass-light);
-  backdrop-filter: blur(6px);
+  backdrop-filter: var(--glass-backdrop-light);
+  -webkit-backdrop-filter: var(--glass-backdrop-light);
   border: 1px solid var(--outline);
   border-radius: var(--radius-sm);
   padding: 10px 12px;

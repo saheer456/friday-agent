@@ -10,7 +10,8 @@
 
 .errorBox {
   background: var(--bg-glass-solid);
-  backdrop-filter: blur(20px);
+  backdrop-filter: var(--glass-backdrop-heavy);
+  -webkit-backdrop-filter: var(--glass-backdrop-heavy);
   border: 1px solid rgba(239, 68, 68, 0.25);
   border-radius: var(--radius);
   padding: 48px 40px;

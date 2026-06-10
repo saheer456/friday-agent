@@ -82,7 +82,10 @@ export function useVoice(
   onInterim?: (text: string) => void,
 ) {
   const [isRecording, setIsRecording] = useState(false);
-  const [sttSupported, setSttSupported] = useState(false);
+  const [sttSupported] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  });
   const [isPlaying, setIsPlaying] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
 
@@ -91,8 +94,11 @@ export function useVoice(
   const finalTranscriptRef = useRef('');
   const onSpeechCompleteRef = useRef(onSpeechComplete);
   const onInterimRef = useRef(onInterim);
-  onSpeechCompleteRef.current = onSpeechComplete;
-  onInterimRef.current = onInterim;
+
+  useEffect(() => {
+    onSpeechCompleteRef.current = onSpeechComplete;
+    onInterimRef.current = onInterim;
+  }, [onSpeechComplete, onInterim]);
 
   // ── TTS state refs ───────────────────────────────────────────
   /**
@@ -119,8 +125,7 @@ export function useVoice(
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRec) { setSttSupported(false); return; }
-    setSttSupported(true);
+    if (!SpeechRec) return;
 
     const recognition = new SpeechRec();
     recognition.continuous = true;

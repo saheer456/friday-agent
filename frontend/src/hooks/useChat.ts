@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useSessions } from './useSessions';
 import { useStreaming } from './useStreaming';
 
@@ -24,13 +24,11 @@ export function useChat(
     createSession: createRawSession,
     deleteSession: deleteRawSession,
     renameSession,
-    searchQueryRef,
   } = useSessions(limitedMode);
 
   // Streaming
   const {
     messages,
-    setMessages,
     phases,
     isBusy,
     hasMoreMessages,

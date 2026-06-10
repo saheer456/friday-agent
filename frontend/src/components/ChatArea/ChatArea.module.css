@@ -70,8 +70,8 @@
   line-height: 1.65;
   font-size: 0.95rem;
   word-wrap: break-word;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: var(--glass-backdrop);
+  -webkit-backdrop-filter: var(--glass-backdrop);
   box-shadow: var(--shadow-glass);
 }
 
