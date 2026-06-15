@@ -10,10 +10,10 @@
   opacity: 0;
   transform: translateY(16px) scale(0.9);
   transition: opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1), transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-  background: rgba(255, 255, 255, 0.15);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid rgba(2, 132, 199, 0.15);
+  background: var(--bg-glass-light);
+  backdrop-filter: var(--glass-backdrop-light);
+  -webkit-backdrop-filter: var(--glass-backdrop-light);
+  border: 1px solid var(--outline);
   box-shadow: 
     0 0 16px rgba(2, 132, 199, 0.06),
     inset 0 0 14px rgba(2, 132, 199, 0.04);

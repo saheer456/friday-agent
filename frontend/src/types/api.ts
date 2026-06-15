@@ -5,6 +5,7 @@ export interface Message {
   streaming?: boolean;
   timestamp?: string;
   createdAt?: string;
+  reasoning?: string;
 }
 
 export interface Phase {

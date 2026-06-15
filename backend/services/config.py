@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     allowed_origins: str = Field(default="http://localhost:8080,http://127.0.0.1:8080", alias="FRIDAY_ALLOWED_ORIGINS")
     api_key: str = Field(default="", alias="FRIDAY_API_KEY")
     log_json: bool = Field(default=False, alias="LOG_JSON")
-    ui_version: str = Field(default="v4.3.1", alias="FRIDAY_UI_VERSION")
+    ui_version: str = Field(default="v4.4.0", alias="FRIDAY_UI_VERSION")
 
     # Weather
     lat: float = Field(default=28.6, alias="FRIDAY_LAT")

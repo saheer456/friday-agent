@@ -179,7 +179,7 @@ export function useStreaming(
     const abortController = new AbortController();
     abortRef.current = abortController;
 
-    const streamTimeout = setTimeout(() => abortController.abort(), 120_000);
+    const streamTimeout = setTimeout(() => abortController.abort(), 180_000);
 
     const userMsgId = `u-${Date.now()}`;
     const aiMsgId = `a-${Date.now()}`;
@@ -190,7 +190,7 @@ export function useStreaming(
     setMessages(prev => [
       ...prev,
       { id: userMsgId, role: 'user', content: text, streaming: false, timestamp: timeStr, createdAt },
-      { id: aiMsgId, role: 'assistant', content: '', streaming: true, timestamp: timeStr, createdAt },
+      { id: aiMsgId, role: 'assistant', content: '', streaming: true, timestamp: timeStr, createdAt, reasoning: '' },
     ]);
 
     setPhases([]);
@@ -210,9 +210,19 @@ export function useStreaming(
 
     while (attempt < maxRetries && !success) {
       try {
+        let buffer = '';
+        let fullText = '';
+        let reasoningText = '';
+        let sawToken = false;
+        let streamDone = false;
+        let ttsSentence = '';
+
         if (attempt > 0) {
           onStatusChange(`Reconnecting (Attempt ${attempt}/${maxRetries - 1})…`, true);
           await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+          setMessages(prev =>
+            prev.map(m => m.id === aiMsgId ? { ...m, content: '', reasoning: '' } : m)
+          );
         }
 
         const endpoint = limitedMode ? '/api/chat/limited/stream' : '/api/chat/stream';
@@ -233,12 +243,6 @@ export function useStreaming(
         const decoder = new TextDecoder();
         if (!reader) throw new Error('No readable stream');
 
-        let buffer = '';
-        let fullText = '';
-        let sawToken = false;
-        let streamDone = false;
-        let ttsSentence = '';
-
         let planSteps: { title: string; detail: string; done: boolean }[] = [];
         let planMsgId: string | null = null;
 
@@ -247,15 +251,16 @@ export function useStreaming(
         outer: while (!streamDone) {
           if (streamGen !== fetchGenRef.current) break outer;
           if (abortController.signal.aborted) {
-            throw new Error('Stream timed out (120s)');
+            throw new Error('Stream timed out (180s)');
           }
           const { done, value } = await reader.read();
           if (done) {
             streamDone = true;
             success = true;
             const finalText = fullText;
+            const finalReasoning = reasoningText;
             setMessages(prev =>
-              prev.map(m => m.id === aiMsgId ? { ...m, streaming: false, content: finalText } : m)
+              prev.map(m => m.id === aiMsgId ? { ...m, streaming: false, content: finalText, reasoning: finalReasoning } : m)
             );
             if (planMsgId) {
               const finalSteps = planSteps.map(s => ({ ...s, done: true }));
@@ -286,8 +291,9 @@ export function useStreaming(
               streamDone = true;
               success = true;
               const finalText = fullText;
+              const finalReasoning = reasoningText;
               setMessages(prev =>
-                prev.map(m => m.id === aiMsgId ? { ...m, streaming: false, content: finalText } : m)
+                prev.map(m => m.id === aiMsgId ? { ...m, streaming: false, content: finalText, reasoning: finalReasoning } : m)
               );
               if (planMsgId) {
                 const finalSteps = planSteps.map(s => ({ ...s, done: true }));
@@ -317,7 +323,18 @@ export function useStreaming(
             if (obj.type === 'phase') {
               const phase = obj as Phase;
 
-              if (phase.id && (phase.id.startsWith('plan_step') || phase.id === 'planner')) {
+              if (phase.id === 'nemotron_thinking') {
+                const chunk = phase.detail || '';
+                reasoningText += chunk;
+                setMessages(prev =>
+                  prev.map(m => m.id === aiMsgId ? { ...m, reasoning: (m.reasoning || '') + chunk } : m)
+                );
+                onStatusChange('Nemotron thinking…', true);
+                setPhases(p => {
+                  if (p.some(x => x.id === 'nemotron_thinking')) return p;
+                  return [...p, { id: 'nemotron_thinking', title: 'Nemotron thinking…', detail: 'Generating chain-of-thought reasoning' }];
+                });
+              } else if (phase.id && (phase.id.startsWith('plan_step') || phase.id === 'planner')) {
                 if (phase.id === 'planner') {
                   planMsgId = `plan-${Date.now()}`;
                   planSteps = [];

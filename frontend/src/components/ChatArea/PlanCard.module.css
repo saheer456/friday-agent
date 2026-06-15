@@ -3,7 +3,8 @@
   border-radius: var(--radius);
   border: 1px solid var(--outline);
   background: var(--bg-glass-light);
-  backdrop-filter: blur(8px);
+  backdrop-filter: var(--glass-backdrop-light);
+  -webkit-backdrop-filter: var(--glass-backdrop-light);
   overflow: hidden;
   transition: border-color 0.2s ease;
 }

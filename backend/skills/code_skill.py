@@ -86,6 +86,7 @@ class CodeSkill(BaseSkill):
             "context":  {"type": "string", "description": "Optional extra context or constraints."},
         },
         required=["task"],
+        permissions=["code:generate"],
     )
     async def generate_code(self, task: str, language: str = "python", context: str = "") -> SkillResult:
         """Ask the LLM to write code. Returns the raw code string."""
@@ -129,6 +130,7 @@ class CodeSkill(BaseSkill):
             "cwd":     {"type": "string", "description": "Working directory path for execution (optional)."},
         },
         required=["code"],
+        permissions=["code:execute"],
     )
     def execute_python(self, code: str, timeout: int = None, cwd: str = None) -> SkillResult:
         """Run Python code in an isolated subprocess and return its output."""
@@ -225,6 +227,7 @@ class CodeSkill(BaseSkill):
             "language": {"type": "string", "description": "Language hint (default: python)."},
         },
         required=["code"],
+        permissions=["code:read"],
     )
     async def analyse_code(self, code: str, language: str = "python") -> SkillResult:
         """Ask the LLM to explain and review a snippet."""
@@ -255,6 +258,7 @@ class CodeSkill(BaseSkill):
             "error": {"type": "string", "description": "Optional error message / traceback."},
         },
         required=["code"],
+        permissions=["code:generate"],
     )
     async def fix_bugs(self, code: str, error: str = "") -> SkillResult:
         """Ask the LLM to fix the code and return the corrected version."""

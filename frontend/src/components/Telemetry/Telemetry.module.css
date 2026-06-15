@@ -237,3 +237,69 @@
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+
+/* ── Additional Telemetry Styles ── */
+.statsList, .skillsList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.statRow, .skillRow {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.statHeader, .skillHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.statName, .skillName {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--primary);
+  letter-spacing: 0.5px;
+}
+
+.statCalls {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.statMetrics, .skillMetrics {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.skillHeader {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.statusIndicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.statusIndicator.healthy {
+  background: #4ade80;
+  box-shadow: 0 0 6px rgba(74, 222, 128, 0.5);
+}
+
+.statusIndicator.unhealthy {
+  background: #f87171;
+  box-shadow: 0 0 6px rgba(248, 113, 113, 0.5);
+}

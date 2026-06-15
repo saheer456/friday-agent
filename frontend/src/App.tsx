@@ -15,7 +15,18 @@ import styles from './App.module.css';
 
 function App() {
   const [statusText, setStatusText] = useState('Online');
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem('theme') as 'light' | 'dark') || 'light');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  useEffect(() => {
+    document.body.setAttribute('data-theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    const next = theme === 'light' ? 'dark' : 'light';
+    setTheme(next);
+    localStorage.setItem('theme', next);
+  };
   const [telemetryOpen, setTelemetryOpen] = useState(false);
   const [memoriesOpen, setMemoriesOpen] = useState(false);
   const [interimText, setInterimText] = useState('');
@@ -303,6 +314,8 @@ function App() {
           onToggleSidebar={() => setSidebarOpen(o => !o)}
           onTogglePause={togglePause}
           fullAccess={hasFullAccess}
+          theme={theme}
+          onToggleTheme={toggleTheme}
         />
 
         {limitedMode && (

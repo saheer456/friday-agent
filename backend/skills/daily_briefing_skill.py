@@ -21,6 +21,7 @@ class DailyBriefingSkill(BaseSkill):
         description="Scan the workspace conversation history to list all pending tasks marked with [TASK].",
         params={},
         required=[],
+        permissions=["daily_briefing:read"],
     )
     def list_tasks(self) -> SkillResult:
         try:
@@ -44,6 +45,7 @@ class DailyBriefingSkill(BaseSkill):
         description="Get a combined daily briefing including current date, weather summary, and pending tasks list.",
         params={},
         required=[],
+        permissions=["daily_briefing:read"],
     )
     async def get_briefing(self) -> SkillResult:
         try:

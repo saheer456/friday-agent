@@ -171,14 +171,31 @@ export function useVoice(
       animationFrameIdRef.current = null;
     }
     document.documentElement.style.setProperty('--voice-volume', '0');
-    try { sourceRef.current?.disconnect(); analyserRef.current?.disconnect(); } catch {}
-    sourceRef.current = null;
-    analyserRef.current = null;
+    
+    // Properly disconnect and clean up audio nodes
+    try { 
+      if (sourceRef.current) {
+        sourceRef.current.disconnect();
+        sourceRef.current = null;
+      }
+      if (analyserRef.current) {
+        analyserRef.current.disconnect();
+        analyserRef.current = null;
+      }
+    } catch {}
+    
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
+      currentAudioRef.current.src = ''; // Release media resource
       currentAudioRef.current = null;
     }
-    blobUrlsRef.current.forEach(u => URL.revokeObjectURL(u));
+    
+    // Revoke blob URLs to prevent memory leaks
+    blobUrlsRef.current.forEach(u => {
+      try {
+        URL.revokeObjectURL(u);
+      } catch {}
+    });
     blobUrlsRef.current = [];
   }, []);
 
@@ -217,13 +234,24 @@ export function useVoice(
         body: JSON.stringify({ text: chunk }),
       });
       if (generationRef.current !== gen) return null;
-      if (!r.ok) throw new Error(`speak ${r.status}`);
+      if (!r.ok) {
+        console.warn(`[TTS] Fetch failed: ${r.status}`);
+        return null;
+      }
       const blob = await r.blob();
       if (generationRef.current !== gen) return null;
+      
+      // Validate blob has content
+      if (!blob || blob.size === 0) {
+        console.warn('[TTS] Empty audio blob received');
+        return null;
+      }
+      
       const url = URL.createObjectURL(blob);
       blobUrlsRef.current.push(url);
       return url;
-    } catch {
+    } catch (err) {
+      console.warn('[TTS] Fetch error:', err);
       return null;
     }
   }, []);
@@ -244,9 +272,18 @@ export function useVoice(
       currentAudioRef.current = audio;
 
       const done = () => {
-        try { sourceRef.current?.disconnect(); analyserRef.current?.disconnect(); } catch {}
-        sourceRef.current = null;
-        analyserRef.current = null;
+        // Clean up this chunk's nodes
+        try { 
+          if (sourceRef.current) {
+            sourceRef.current.disconnect();
+            sourceRef.current = null;
+          }
+          if (analyserRef.current) {
+            analyserRef.current.disconnect();
+            analyserRef.current = null;
+          }
+        } catch {}
+        
         if (animationFrameIdRef.current) {
           cancelAnimationFrame(animationFrameIdRef.current);
           animationFrameIdRef.current = null;
@@ -256,11 +293,20 @@ export function useVoice(
       };
 
       audio.onended = done;
-      audio.onerror = done;
+      audio.onerror = (err) => {
+        console.warn('[TTS] Audio playback error:', err);
+        done();
+      };
 
       const startPlayback = async () => {
         if (generationRef.current !== gen) { resolve(); return; }
-        if (ctx.state === 'suspended') await ctx.resume();
+        if (ctx.state === 'suspended') {
+          try {
+            await ctx.resume();
+          } catch (e) {
+            console.warn('[TTS] AudioContext resume failed:', e);
+          }
+        }
 
         try {
           const source = ctx.createMediaElementSource(audio);
@@ -283,7 +329,7 @@ export function useVoice(
           await audio.play();
           tick();
         } catch (err) {
-          console.warn('[TTS] Playback error:', err);
+          console.warn('[TTS] Playback setup error:', err);
           resolve();
         }
       };
@@ -299,19 +345,26 @@ export function useVoice(
     setIsPlaying(true);
 
     try {
-      while (generationRef.current === gen) {
-        if (queueRef.current.length > 0) {
-          const item = queueRef.current.shift()!;
-          const url = await item.urlPromise;
-          if (url && generationRef.current === gen) {
-            await _playUrl(url, gen);
-          }
-        } else {
-          setIsPlaying(false);
-          break;
+      while (generationRef.current === gen && queueRef.current.length > 0) {
+        const item = queueRef.current.shift()!;
+        const url = await item.urlPromise;
+        
+        // Skip empty/failed chunks but continue playback
+        if (!url) {
+          console.warn('[TTS] Skipping failed chunk, continuing playback');
+          continue;
+        }
+        
+        if (generationRef.current === gen) {
+          await _playUrl(url, gen);
         }
       }
+    } catch (err) {
+      console.error('[TTS] Playback loop error:', err);
     } finally {
+      if (generationRef.current === gen) {
+        setIsPlaying(false);
+      }
       isProcessingRef.current = false;
     }
   }, [_playUrl]);

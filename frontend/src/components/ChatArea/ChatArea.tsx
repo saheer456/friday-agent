@@ -38,6 +38,34 @@ function shouldShowDateSeparator(curr: Message, prev?: Message): boolean {
   return currDate.toDateString() !== prevDate.toDateString();
 }
 
+const ThinkingBlock = ({ reasoning, isStreaming }: { reasoning: string; isStreaming: boolean }) => {
+  const [isOpen, setIsOpen] = useState(isStreaming);
+
+  useEffect(() => {
+    if (isStreaming) {
+      setIsOpen(true);
+    }
+  }, [reasoning, isStreaming]);
+
+  return (
+    <div className={styles.thinkingBlock}>
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className={styles.thinkingHeader}
+      >
+        <span className={styles.thinkingDot} />
+        <span className={styles.thinkingTitle}>
+          {isStreaming ? 'Thinking...' : 'Thinking Process'}
+        </span>
+        <span className={`${styles.thinkingArrow} ${isOpen ? styles.arrowOpen : ''}`}>▼</span>
+      </button>
+      {isOpen && (
+        <pre className={styles.thinkingContent}>{reasoning}</pre>
+      )}
+    </div>
+  );
+};
+
 export function ChatArea({
   messages, isSpeaking, onDropFile, onSelectSuggestion,
   onLoadMore, hasMore, isLoadingHistory,
@@ -191,7 +219,12 @@ export function ChatArea({
                         {m.role === 'user' ? (
                           m.content
                         ) : (
-                          <MarkdownRenderer content={m.content} isStreaming={m.streaming} />
+                          <>
+                            {m.reasoning && (
+                              <ThinkingBlock reasoning={m.reasoning} isStreaming={!!m.streaming} />
+                            )}
+                            <MarkdownRenderer content={m.content} isStreaming={m.streaming} />
+                          </>
                         )}
                       </div>
                     </div>

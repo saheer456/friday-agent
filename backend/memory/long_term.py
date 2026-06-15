@@ -8,10 +8,9 @@ from contextlib import asynccontextmanager
 
 logger = logging.getLogger("LongTermMemory")
 
-DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "memory_store.db"
+from .db import _get_sq_conn, DB_PATH
 
-_db_conn = None
-
+# Remove local _db_conn singleton since it is shared in db.py
 
 async def _sb_init() -> None:
     from backend.supabase_client import get_client
@@ -90,50 +89,40 @@ async def _sb_count() -> int:
         return 0
 
 
-async def _get_sq_conn():
-    global _db_conn
-    import aiosqlite
-    if _db_conn is None:
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _db_conn = await aiosqlite.connect(DB_PATH)
-        _db_conn.row_factory = aiosqlite.Row
-        await _db_conn.execute('''
-            CREATE TABLE IF NOT EXISTS memories (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                content TEXT NOT NULL,
-                category TEXT NOT NULL,
-                importance REAL DEFAULT 0.5,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        await _db_conn.execute('''
-            CREATE TABLE IF NOT EXISTS graph_nodes (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                type TEXT NOT NULL,
-                description TEXT
-            )
-        ''')
-        await _db_conn.execute('''
-            CREATE TABLE IF NOT EXISTS graph_edges (
-                source TEXT,
-                target TEXT,
-                relation TEXT,
-                weight REAL DEFAULT 1.0,
-                PRIMARY KEY (source, target, relation),
-                FOREIGN KEY (source) REFERENCES graph_nodes(id) ON DELETE CASCADE,
-                FOREIGN KEY (target) REFERENCES graph_nodes(id) ON DELETE CASCADE
-            )
-        ''')
-        await _db_conn.execute('CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source)')
-        await _db_conn.execute('CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target)')
-        await _db_conn.commit()
-    return _db_conn
-
-
 async def _sq_init() -> None:
     conn = await _get_sq_conn()
-    logger.info("[LongTermMemory] SQLite backend ready")
+    await conn.execute('''
+        CREATE TABLE IF NOT EXISTS memories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content TEXT NOT NULL,
+            category TEXT NOT NULL,
+            importance REAL DEFAULT 0.5,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    await conn.execute('''
+        CREATE TABLE IF NOT EXISTS graph_nodes (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL,
+            description TEXT
+        )
+    ''')
+    await conn.execute('''
+        CREATE TABLE IF NOT EXISTS graph_edges (
+            source TEXT,
+            target TEXT,
+            relation TEXT,
+            weight REAL DEFAULT 1.0,
+            PRIMARY KEY (source, target, relation),
+            FOREIGN KEY (source) REFERENCES graph_nodes(id) ON DELETE CASCADE,
+            FOREIGN KEY (target) REFERENCES graph_nodes(id) ON DELETE CASCADE
+        )
+    ''')
+    await conn.execute('CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source)')
+    await conn.execute('CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target)')
+    await conn.commit()
+    logger.info("[LongTermMemory] SQLite backend ready and initialized")
 
 
 async def _sq_insert(content: str, category: str, importance: float) -> int:
@@ -187,7 +176,8 @@ async def _sq_count() -> int:
 
 
 def _use_supabase() -> bool:
-    return bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_KEY"))
+    from backend.supabase_client import is_configured
+    return is_configured()
 
 
 async def init_db() -> None:

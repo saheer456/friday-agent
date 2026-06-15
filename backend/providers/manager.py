@@ -10,6 +10,7 @@ from .groq import GroqProvider
 from .openrouter import OpenRouterProvider
 from .cerebras import CerebrasProvider
 from .ollama import OllamaProvider
+from .nvidia import NvidiaProvider
 
 logger = logging.getLogger("ProviderManager")
 
@@ -21,6 +22,18 @@ class ProviderManager:
         self._rate_limiters: dict[str, float] = {}
         self._health_cache: dict[str, tuple[bool, float]] = {}
         self._rate_limited_until: dict[str, float] = {}
+        self._usage_stats: dict[str, dict] = {}
+
+    def _record_call(self, provider_name: str, duration: float, is_error: bool) -> None:
+        if provider_name not in self._usage_stats:
+            self._usage_stats[provider_name] = {"calls": 0, "errors": 0, "total_latency_ms": 0.0}
+        self._usage_stats[provider_name]["calls"] += 1
+        if is_error:
+            self._usage_stats[provider_name]["errors"] += 1
+        self._usage_stats[provider_name]["total_latency_ms"] += duration * 1000.0
+
+    def get_usage_stats(self) -> dict[str, dict]:
+        return self._usage_stats
 
     def register(self, name: str, provider: BaseProvider) -> None:
         self._providers[name] = provider
@@ -47,6 +60,12 @@ class ProviderManager:
         preferred = os.getenv("FRIDAY_LLM_PROVIDER", "").strip().lower()
         allow_ollama = os.getenv("FRIDAY_ENABLE_OLLAMA", "").strip().lower() in {"1", "true", "yes", "on"}
 
+        # ── NVIDIA Nemotron (primary when key present) ────────────────────────
+        nvidia_key = (os.getenv("NVIDIA_API_KEY") or "").strip()
+        if self.is_key_usable(nvidia_key) and "nvidia" not in self._providers:
+            self.register("nvidia", NvidiaProvider())
+
+        # ── Groq (standby / fallback) ─────────────────────────────────────────
         groq_key = (os.getenv("GROQ_API_KEY") or "").strip()
         if self.is_key_usable(groq_key) and "groq" not in self._providers:
             self.register("groq", GroqProvider())
@@ -79,7 +98,7 @@ class ProviderManager:
 
         if preferred:
             order = [preferred]
-            for p in ["groq", "cerebras", "openrouter", "ollama"]:
+            for p in ["nvidia", "groq", "cerebras", "openrouter", "ollama"]:
                 if p not in order:
                     order.append(p)
             self.set_fallback_order(order)
@@ -91,13 +110,19 @@ class ProviderManager:
             preferred or "<auto>",
         )
 
-        # Always ensure groq is first in fallback order (primary free-tier provider)
-        if not preferred and "groq" in self._providers:
-            order = ["groq"]
+        # Auto fallback priority: NVIDIA → Groq → others
+        if not preferred:
+            priority = ["nvidia", "groq", "cerebras", "openrouter", "ollama"]
+            order = [p for p in priority if p in self._providers]
             for p in self._fallback_order:
                 if p not in order:
                     order.append(p)
             self._fallback_order = order
+
+        logger.info(
+            "[ProviderManager] Active fallback order: %s",
+            self._fallback_order,
+        )
 
     def _check_rate_limit(self, provider_name: str) -> bool:
         last_call = self._rate_limiters.get(provider_name, 0.0)
@@ -108,8 +133,6 @@ class ProviderManager:
         return True
 
     def _parse_retry_after(self, error_msg: str) -> float:
-        # Search for pattern "try again in X.XXs" or "try again in Xs" or "retry-after: X"
-        # e.g., "Please try again in 15.34s." or "Please try again in 21s."
         match = re.search(r"try\s+again\s+in\s+(\d+(?:\.\d+)?)\s*(?:s|sec|second|seconds)?", error_msg, re.IGNORECASE)
         if match:
             return float(match.group(1))
@@ -122,7 +145,6 @@ class ProviderManager:
         if match:
             return float(match.group(1))
             
-        # Default cooldown
         return 60.0
 
     async def generate(
@@ -167,8 +189,11 @@ class ProviderManager:
                 await asyncio.sleep(0.05)
 
             for attempt in range(provider.config.max_retries):
+                t0 = time.monotonic()
                 try:
                     result = await provider.chat(messages, tools=tools, **kwargs)
+                    duration = time.monotonic() - t0
+                    self._record_call(provider_name, duration, is_error=False)
                     provider.status = ProviderStatus.HEALTHY
                     logger.debug(
                         "[ProviderManager] Generate succeeded provider=%s finish_reason=%s content_chars=%d tool_calls=%d",
@@ -179,11 +204,12 @@ class ProviderManager:
                     )
                     return result
                 except Exception as e:
+                    duration = time.monotonic() - t0
+                    self._record_call(provider_name, duration, is_error=True)
                     err_str = str(e)
                     err_msg = f"{provider_name}({provider.config.model}): {e}"
                     logger.warning(f"[ProviderManager] {provider_name} attempt {attempt + 1} failed: {e}")
 
-                    # 404 = model not found / bad endpoint — no point retrying
                     if "404" in err_str:
                         provider.status = ProviderStatus.UNHEALTHY
                         errors.append(err_msg + " [model/endpoint not found — check model name]")
@@ -191,7 +217,6 @@ class ProviderManager:
 
                     if "429" in err_str or "rate" in err_str.lower():
                         provider.status = ProviderStatus.RATE_LIMITED
-                        # Parse Retry-After or x-ratelimit-reset from error string if available
                         cooldown = self._parse_retry_after(err_str)
                         self._rate_limited_until[provider_name] = time.monotonic() + cooldown
                         logger.warning(
@@ -255,11 +280,14 @@ class ProviderManager:
                 await asyncio.sleep(0.05)
 
             for attempt in range(provider.config.max_retries):
+                t0 = time.monotonic()
                 try:
                     text_chunks = 0
                     tool_chunks = 0
                     async for event in provider.stream(messages, tools=tools, **kwargs):
                         if event.get("type") == "error":
+                            duration = time.monotonic() - t0
+                            self._record_call(provider_name, duration, is_error=True)
                             err_detail = event['error']
                             errors.append(f"{provider_name}({provider.config.model}): {err_detail}")
                             logger.debug(
@@ -275,6 +303,8 @@ class ProviderManager:
                             tool_chunks += 1
                         yield event
                         if event.get("type") == "done":
+                            duration = time.monotonic() - t0
+                            self._record_call(provider_name, duration, is_error=False)
                             provider.status = ProviderStatus.HEALTHY
                             logger.debug(
                                 "[ProviderManager] Stream succeeded provider=%s finish_reason=%s text_chunks=%d tool_chunks=%d",
@@ -292,11 +322,12 @@ class ProviderManager:
                         break
                     break
                 except Exception as e:
+                    duration = time.monotonic() - t0
+                    self._record_call(provider_name, duration, is_error=True)
                     err_str = str(e)
                     err_msg = f"{provider_name}({provider.config.model}): {e}"
                     logger.warning(f"[ProviderManager] {provider_name} stream attempt {attempt + 1} failed: {e}")
 
-                    # 404 = model not found / bad endpoint — no point retrying
                     if "404" in err_str:
                         provider.status = ProviderStatus.UNHEALTHY
                         errors.append(err_msg + " [model/endpoint not found — check model name]")

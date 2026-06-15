@@ -1,5 +1,5 @@
 import styles from './Header.module.css';
-import { Activity, Database, LogOut, Menu, Trash2, Pause, Play } from 'lucide-react';
+import { Activity, Database, LogOut, Menu, Trash2, Pause, Play, Sun, Moon } from 'lucide-react';
 
 interface HeaderProps {
   version: string;
@@ -14,6 +14,8 @@ interface HeaderProps {
   onToggleSidebar?: () => void;
   onTogglePause?: () => void;
   fullAccess?: boolean;
+  theme: 'light' | 'dark';
+  onToggleTheme: () => void;
 }
 
 export function Header({
@@ -29,6 +31,8 @@ export function Header({
   onToggleSidebar,
   onTogglePause,
   fullAccess = true,
+  theme,
+  onToggleTheme,
 }: HeaderProps) {
   return (
     <header className={styles.header}>
@@ -111,6 +115,16 @@ export function Header({
             <Activity size={16} />
           </button>
         )}
+
+        <button
+          type="button"
+          className={styles.iconBtn}
+          onClick={onToggleTheme}
+          aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} theme`}
+          title={`Switch to ${theme === 'light' ? 'dark' : 'light'} theme`}
+        >
+          {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
+        </button>
 
         <button
           type="button"

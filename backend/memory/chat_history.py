@@ -14,172 +14,212 @@ from typing import List, Dict, Optional
 
 import uuid
 import aiosqlite
+from .db import _get_sq_conn, DB_PATH
 
 logger = logging.getLogger("ChatHistory")
-
-DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "memory_store.db"
 
 # ── Backend selection ─────────────────────────────────────────────────────────
 
 def _use_supabase() -> bool:
-    from backend.supabase_client import is_available
-    return is_available()
+    from backend.supabase_client import is_configured
+    return is_configured()
 
 
-# ── SQLite helpers (unchanged logic) ──────────────────────────────────────────
+# ── SQLite helpers ──────────────────────────────────────────────────────────
 
 async def _sq_init():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    async with aiosqlite.connect(DB_PATH) as conn:
+    conn = await _get_sq_conn()
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
+        )
+    """)
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS session_files (
+            session_id TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (session_id, filename),
+            FOREIGN KEY(session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
+        )
+    """)
+    async with conn.execute("PRAGMA table_info(chat_history)") as cursor:
+        columns = [row[1] for row in await cursor.fetchall()]
+    if "session_id" not in columns:
+        try:
+            await conn.execute("ALTER TABLE chat_history ADD COLUMN session_id TEXT DEFAULT 'default-session';")
+        except Exception:
+            pass
+            
+    # Add FTS5 table and triggers for message content indexing
+    try:
+        await conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(content, content=chat_history, content_rowid=id);")
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS chat_sessions (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
+            CREATE TRIGGER IF NOT EXISTS after_messages_insert AFTER INSERT ON chat_history BEGIN
+                INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+            END;
         """)
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS chat_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
-            )
+            CREATE TRIGGER IF NOT EXISTS after_messages_delete AFTER DELETE ON chat_history BEGIN
+                DELETE FROM messages_fts WHERE rowid = old.id;
+            END;
         """)
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS session_files (
-                session_id TEXT NOT NULL,
-                filename TEXT NOT NULL,
-                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (session_id, filename),
-                FOREIGN KEY(session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
-            )
+            CREATE TRIGGER IF NOT EXISTS after_messages_update AFTER UPDATE ON chat_history BEGIN
+                UPDATE messages_fts SET content = new.content WHERE rowid = old.id;
+            END;
         """)
-        async with conn.execute("PRAGMA table_info(chat_history)") as cursor:
-            columns = [row[1] for row in await cursor.fetchall()]
-        if "session_id" not in columns:
-            try:
-                await conn.execute("ALTER TABLE chat_history ADD COLUMN session_id TEXT DEFAULT 'default-session';")
-            except Exception:
-                pass
-        await conn.commit()
+        # Populate FTS if empty
+        async with conn.execute("SELECT COUNT(*) FROM messages_fts") as cursor:
+            row = await cursor.fetchone()
+            count = row[0] if row else 0
+        if count == 0:
+            await conn.execute("INSERT INTO messages_fts(rowid, content) SELECT id, content FROM chat_history")
+    except Exception as e:
+        logger.warning(f"Failed to initialize SQLite FTS5: {e}")
+        
+    await conn.commit()
 
 async def _sq_create_session(session_id: str, title: str) -> None:
-    async with aiosqlite.connect(DB_PATH) as conn:
-        await conn.execute("INSERT OR IGNORE INTO chat_sessions (id, title) VALUES (?, ?)", (session_id, title))
-        await conn.commit()
+    conn = await _get_sq_conn()
+    await conn.execute("INSERT OR IGNORE INTO chat_sessions (id, title) VALUES (?, ?)", (session_id, title))
+    await conn.commit()
 
-async def _sq_get_sessions() -> List[Dict]:
+async def _sq_get_sessions(search: Optional[str] = None) -> List[Dict]:
     try:
-        async with aiosqlite.connect(DB_PATH) as conn:
-            conn.row_factory = aiosqlite.Row
-            async with conn.execute("""
-                SELECT s.id, s.title, s.created_at,
-                       (SELECT COUNT(*) FROM chat_history h WHERE h.session_id = s.id) AS message_count,
-                       COALESCE(
-                         (SELECT MAX(h.created_at) FROM chat_history h WHERE h.session_id = s.id),
-                         s.created_at
-                       ) AS updated_at
-                FROM chat_sessions s
-                ORDER BY updated_at DESC
-            """) as cursor:
-                rows = await cursor.fetchall()
-                return [dict(r) for r in rows]
-    except Exception:
+        conn = await _get_sq_conn()
+        query_sql = """
+            SELECT s.id, s.title, s.created_at,
+                   (SELECT COUNT(*) FROM chat_history h WHERE h.session_id = s.id) AS message_count,
+                   COALESCE(
+                     (SELECT MAX(h.created_at) FROM chat_history h WHERE h.session_id = s.id),
+                     s.created_at
+                   ) AS updated_at
+            FROM chat_sessions s
+        """
+        params = []
+        if search:
+            query_sql += """
+                WHERE s.title LIKE ? OR s.id IN (
+                    SELECT session_id FROM chat_history h
+                    JOIN messages_fts fts ON fts.rowid = h.id
+                    WHERE fts.content MATCH ?
+                )
+            """
+            params.append(f"%{search}%")
+            # Prepare MATCH term
+            clean_search = " OR ".join(f'"{w}"' for w in search.split() if w.isalnum())
+            params.append(clean_search or search)
+            
+        query_sql += " ORDER BY updated_at DESC"
+        async with conn.execute(query_sql, params) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"SQLite _sq_get_sessions failed: {e}")
         return []
 
 async def _sq_delete_session(session_id: str) -> None:
-    async with aiosqlite.connect(DB_PATH) as conn:
-        await conn.execute("DELETE FROM chat_sessions WHERE id = ?", (session_id,))
-        await conn.execute("DELETE FROM session_files WHERE session_id = ?", (session_id,))
-        await conn.commit()
+    conn = await _get_sq_conn()
+    await conn.execute("DELETE FROM chat_sessions WHERE id = ?", (session_id,))
+    await conn.execute("DELETE FROM session_files WHERE session_id = ?", (session_id,))
+    await conn.commit()
 
 async def _sq_update_session_title(session_id: str, title: str) -> None:
-    async with aiosqlite.connect(DB_PATH) as conn:
-        await conn.execute("UPDATE chat_sessions SET title = ? WHERE id = ?", (title, session_id))
-        await conn.commit()
+    conn = await _get_sq_conn()
+    await conn.execute("UPDATE chat_sessions SET title = ? WHERE id = ?", (title, session_id))
+    await conn.commit()
 
 async def _sq_save_message(session_id: str, role: str, content: str) -> None:
     await _sq_create_session(session_id, "New Chat")
-    async with aiosqlite.connect(DB_PATH) as conn:
-        await conn.execute("INSERT INTO chat_history (session_id, role, content) VALUES (?, ?, ?)", (session_id, role, content))
-        await conn.commit()
+    conn = await _get_sq_conn()
+    await conn.execute("INSERT INTO chat_history (session_id, role, content) VALUES (?, ?, ?)", (session_id, role, content))
+    await conn.commit()
 
 async def _sq_get_messages(session_id: str, limit: int = 100, before_id: Optional[int] = None) -> List[Dict]:
     try:
-        async with aiosqlite.connect(DB_PATH) as conn:
-            conn.row_factory = aiosqlite.Row
-            if before_id:
-                async with conn.execute(
-                    "SELECT id, role, content, created_at FROM chat_history WHERE session_id = ? AND id < ? ORDER BY id DESC LIMIT ?",
-                    (session_id, before_id, limit),
-                ) as cursor:
-                    rows = await cursor.fetchall()
-            else:
-                async with conn.execute(
-                    "SELECT id, role, content, created_at FROM chat_history WHERE session_id = ? ORDER BY id DESC LIMIT ?",
-                    (session_id, limit),
-                ) as cursor:
-                    rows = await cursor.fetchall()
-            results = [dict(r) for r in rows]
-            results.reverse()
-            return results
+        conn = await _get_sq_conn()
+        if before_id:
+            async with conn.execute(
+                "SELECT id, role, content, created_at FROM chat_history WHERE session_id = ? AND id < ? ORDER BY id DESC LIMIT ?",
+                (session_id, before_id, limit),
+            ) as cursor:
+                rows = await cursor.fetchall()
+        else:
+            async with conn.execute(
+                "SELECT id, role, content, created_at FROM chat_history WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+                (session_id, limit),
+            ) as cursor:
+                rows = await cursor.fetchall()
+        results = [dict(r) for r in rows]
+        results.reverse()
+        return results
     except Exception:
         return []
 
 async def _sq_get_message_count(session_id: str) -> int:
     try:
-        async with aiosqlite.connect(DB_PATH) as conn:
-            async with conn.execute("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", (session_id,)) as cursor:
-                row = await cursor.fetchone()
-                return row[0] if row else 0
+        conn = await _get_sq_conn()
+        async with conn.execute("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", (session_id,)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
     except Exception:
         return 0
 
 async def _sq_clear(session_id: Optional[str] = None) -> None:
-    async with aiosqlite.connect(DB_PATH) as conn:
-        if session_id:
-            await conn.execute("DELETE FROM chat_history WHERE session_id = ?", (session_id,))
-            await conn.execute("DELETE FROM session_files WHERE session_id = ?", (session_id,))
-        else:
-            await conn.execute("DELETE FROM chat_history")
-            await conn.execute("DELETE FROM session_files")
-            await conn.execute("DELETE FROM chat_sessions")
-        await conn.commit()
+    conn = await _get_sq_conn()
+    if session_id:
+        await conn.execute("DELETE FROM chat_history WHERE session_id = ?", (session_id,))
+        await conn.execute("DELETE FROM session_files WHERE session_id = ?", (session_id,))
+    else:
+        await conn.execute("DELETE FROM chat_history")
+        await conn.execute("DELETE FROM session_files")
+        await conn.execute("DELETE FROM chat_sessions")
+    await conn.commit()
 
 async def _sq_associate_file(session_id: str, filename: str) -> None:
     await _sq_create_session(session_id, "New Chat")
-    async with aiosqlite.connect(DB_PATH) as conn:
-        await conn.execute("INSERT OR IGNORE INTO session_files (session_id, filename) VALUES (?, ?)", (session_id, filename))
-        await conn.commit()
+    conn = await _get_sq_conn()
+    await conn.execute("INSERT OR IGNORE INTO session_files (session_id, filename) VALUES (?, ?)", (session_id, filename))
+    await conn.commit()
 
 async def _sq_get_files(session_id: str) -> List[str]:
     try:
-        async with aiosqlite.connect(DB_PATH) as conn:
-            conn.row_factory = aiosqlite.Row
-            async with conn.execute("SELECT filename FROM session_files WHERE session_id = ?", (session_id,)) as cursor:
-                return [r["filename"] for r in await cursor.fetchall()]
+        conn = await _get_sq_conn()
+        async with conn.execute("SELECT filename FROM session_files WHERE session_id = ?", (session_id,)) as cursor:
+            return [r["filename"] for r in await cursor.fetchall()]
     except Exception:
         return []
 
 async def _sq_remove_file(session_id: str, filename: str) -> None:
-    async with aiosqlite.connect(DB_PATH) as conn:
-        await conn.execute("DELETE FROM session_files WHERE session_id = ? AND filename = ?", (session_id, filename))
-        await conn.commit()
+    conn = await _get_sq_conn()
+    await conn.execute("DELETE FROM session_files WHERE session_id = ? AND filename = ?", (session_id, filename))
+    await conn.commit()
 
 async def _sq_search_sessions(query: str) -> List[Dict]:
     try:
-        async with aiosqlite.connect(DB_PATH) as conn:
-            conn.row_factory = aiosqlite.Row
-            async with conn.execute(
-                "SELECT id, title, created_at FROM chat_sessions WHERE title LIKE ? ORDER BY created_at DESC LIMIT 50",
-                (f"%{query}%",),
-            ) as cursor:
-                return [dict(r) for r in await cursor.fetchall()]
+        conn = await _get_sq_conn()
+        async with conn.execute(
+            "SELECT id, title, created_at FROM chat_sessions WHERE title LIKE ? ORDER BY created_at DESC LIMIT 50",
+            (f"%{query}%",),
+        ) as cursor:
+            return [dict(r) for r in await cursor.fetchall()]
     except Exception:
         return []
+
 
 
 # ── Supabase helpers ──────────────────────────────────────────────────────────
@@ -312,7 +352,7 @@ async def _sb_clear(session_id: Optional[str] = None) -> None:
             await sb.table("messages").delete().eq("session_id", session_id).execute()
             await sb.table("session_files").delete().eq("session_id", session_id).execute()
         else:
-            await sb.table("messages").delete().neq("id", 0).execute()
+            await sb.table("messages").delete().neq("id", -1).execute()
             await sb.table("session_files").delete().neq("session_id", "").execute()
             await sb.table("sessions").delete().neq("id", "").execute()
     except Exception as e:
@@ -478,10 +518,10 @@ async def ensure_session_access(session_id: str, user_id: Optional[str]) -> bool
             return False
     # SQLite backend: ensure session exists (do not allow access to unknown sessions)
     try:
-        async with aiosqlite.connect(DB_PATH) as conn:
-            async with conn.execute("SELECT 1 FROM chat_sessions WHERE id = ? LIMIT 1", (session_id,)) as cursor:
-                row = await cursor.fetchone()
-                return bool(row)
+        conn = await _get_sq_conn()
+        async with conn.execute("SELECT 1 FROM chat_sessions WHERE id = ? LIMIT 1", (session_id,)) as cursor:
+            row = await cursor.fetchone()
+            return bool(row)
     except Exception as e:
         logger.error(f"SQLite ensure_session_access failed: {e}")
         return False

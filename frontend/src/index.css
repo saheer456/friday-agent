@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&display=swap');
+
 :root {
   /* ── Ultra-Premium iOS Apple Glass Theme ──────────────────────────── */
   --bg-glass:        rgba(255, 255, 255, 0.38);
@@ -110,4 +112,67 @@ button {
 ::selection {
   background: var(--primary);
   color: #fff;
+}
+
+/* ── Dark Theme Overrides ── */
+body[data-theme="dark"] {
+  background: #0b0f19;
+  background-image:
+    radial-gradient(circle at 10% 20%, rgba(56, 189, 248, 0.10) 0%, transparent 45%),
+    radial-gradient(circle at 90% 10%, rgba(129, 140, 248, 0.08) 0%, transparent 45%),
+    radial-gradient(circle at 50% 85%, rgba(236, 72, 153, 0.05) 0%, transparent 50%),
+    radial-gradient(circle at 80% 80%, rgba(56, 189, 248, 0.06) 0%, transparent 40%),
+    radial-gradient(circle at 0% 100%, rgba(129, 140, 248, 0.06) 0%, transparent 50%);
+}
+
+body[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+}
+body[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+[data-theme="dark"] {
+  --bg-glass:        rgba(15, 23, 42, 0.45);
+  --bg-glass-solid:  rgba(15, 23, 42, 0.85);
+  --bg-glass-light:  rgba(15, 23, 42, 0.28);
+  --bg-glass-hover:  rgba(30, 41, 59, 0.60);
+  --bg-glass-active: rgba(30, 41, 59, 0.75);
+
+  --primary:         #38bdf8;
+  --primary-dim:     rgba(56, 189, 248, 0.08);
+  --primary-border:  rgba(56, 189, 248, 0.22);
+
+  --accent:          #818cf8;
+  --accent-dim:      rgba(129, 140, 248, 0.08);
+  --accent-border:   rgba(129, 140, 248, 0.18);
+
+  --amber:           #fbbf24;
+  --amber-dim:       rgba(251, 191, 36, 0.08);
+
+  --text:            #f1f5f9;
+  --text-muted:      #94a3b8;
+  
+  --outline:         rgba(255, 255, 255, 0.08);
+  --outline-hover:   rgba(255, 255, 255, 0.14);
+  --outline-active:  rgba(255, 255, 255, 0.20);
+
+  --shadow-glass:    inset 0 1px 1px 0 rgba(255, 255, 255, 0.05),
+                     0 4px 16px rgba(0, 0, 0, 0.35),
+                     0 1px 2px rgba(0, 0, 0, 0.2);
+                     
+  --shadow-glass-md: inset 0 1px 2px 0 rgba(255, 255, 255, 0.07),
+                     0 8px 32px rgba(0, 0, 0, 0.4),
+                     0 1px 3px rgba(0, 0, 0, 0.25);
+                     
+  --shadow-glass-lg: inset 0 1px 3px 0 rgba(255, 255, 255, 0.1),
+                     0 16px 48px rgba(0, 0, 0, 0.5),
+                     0 2px 4px rgba(0, 0, 0, 0.3);
+
+  --bg1:             rgba(15, 23, 42, 0.3);
+  --bg2:             rgba(30, 41, 59, 0.4);
+  --code-bg:         rgba(15, 23, 42, 0.6);
+  --code-header:     rgba(30, 41, 59, 0.8);
+  --code-text:       #f1f5f9;
+  --code-border:     rgba(255, 255, 255, 0.08);
 }

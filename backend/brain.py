@@ -358,6 +358,19 @@ async def _iter_chat_turn(user_message: str, session_id: str, voice_mode: bool, 
                 ):
                     if event.get("type") == "error":
                         last_error = f"[Error: {event['error']}]"
+                    elif event.get("type") == "reasoning":
+                        # Nemotron chain-of-thought tokens — surface as a phase
+                        # so the UI can show a thinking indicator without
+                        # polluting the final saved response.
+                        if emit_phases:
+                            yield (
+                                "phase",
+                                {
+                                    "id": "nemotron_thinking",
+                                    "title": "Nemotron thinking…",
+                                    "detail": (event.get("text") or "")[:120],
+                                },
+                            )
                     elif event.get("type") == "text":
                         chunk = event.get("text", "")
                         if chunk:

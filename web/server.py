@@ -233,9 +233,9 @@ async def _assert_session_access(session_id: str, user: dict) -> None:
 
 
 def _ui_info() -> dict:
-    version = (os.getenv("FRIDAY_UI_VERSION") or "v4.3.1").strip()
+    version = (os.getenv("FRIDAY_UI_VERSION") or "v4.4.0").strip()
     if not version:
-        version = "v4.3.1"
+        version = "v4.4.0"
     return {"version": version}
 
 
@@ -801,6 +801,43 @@ async def system_info(_auth: dict = Depends(verify_user_auth)):
         "readiness": readiness,
         "history_turns": history_turns,
     }
+
+
+@app.get("/api/providers/stats")
+async def get_providers_stats(_auth: dict = Depends(verify_user_auth)):
+    from backend.providers import provider_manager
+    return provider_manager.get_usage_stats()
+
+
+@app.get("/api/skills/health")
+async def get_skills_health(_auth: dict = Depends(verify_user_auth)):
+    from backend.skills.skill_base import SkillRegistry
+    import inspect
+    results = {}
+    for name, skill in SkillRegistry.all().items():
+        try:
+            health_res = skill.health_check()
+            if inspect.iscoroutine(health_res) or asyncio.iscoroutine(health_res):
+                ok = await health_res
+            else:
+                ok = health_res
+            results[name] = {
+                "healthy": bool(ok),
+                "configured": skill._configured,
+                "enabled": skill._enabled,
+                "exec_count": skill._exec_count,
+                "fail_count": skill._fail_count,
+            }
+        except Exception as e:
+            results[name] = {
+                "healthy": False,
+                "error": str(e),
+                "configured": skill._configured,
+                "enabled": skill._enabled,
+                "exec_count": skill._exec_count,
+                "fail_count": skill._fail_count,
+            }
+    return results
 
 
 @app.post("/api/chat/stream")

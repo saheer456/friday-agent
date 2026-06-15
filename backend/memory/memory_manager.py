@@ -13,6 +13,8 @@ logger = logging.getLogger("MemoryManager")
 
 class MemoryManager:
     """Orchestrates short-term buffer, ranking, SQLite and ChromaDB vector storage."""
+    _save_lock = asyncio.Lock()
+    _graph_extraction_buffer: List[str] = []
 
     @classmethod
     async def initialize(cls) -> None:
@@ -45,42 +47,49 @@ class MemoryManager:
         import os
         min_importance = float(os.getenv("FRIDAY_MEMORY_MIN_IMPORTANCE", "0.4"))
         if importance >= min_importance:
-            # Similarity pre-check to prevent duplicate memory creation
-            try:
-                from .semantic_memory import embedder, vector_store
-                if embedder.is_ready() and vector_store.is_ready():
-                    query_vector = await embedder.embed_text(user_msg)
-                    hits = await vector_store.search_memories(query_vector, limit=1)
-                    if hits and hits[0].get("score", 0.0) >= 0.85:
-                        logger.info(f"Discarding duplicate memory (similarity: {hits[0]['score']:.2f})")
-                        return
-            except Exception as e:
-                logger.error(f"Failed memory duplicate check: {e}")
+            async with cls._save_lock:
+                # Similarity pre-check to prevent duplicate memory creation
+                try:
+                    from .semantic_memory import embedder, vector_store
+                    if embedder.is_ready() and vector_store.is_ready():
+                        query_vector = await embedder.embed_text(user_msg)
+                        hits = await vector_store.search_memories(query_vector, limit=1)
+                        if hits and hits[0].get("score", 0.0) >= 0.85:
+                            logger.info(f"Discarding duplicate memory (similarity: {hits[0]['score']:.2f})")
+                            return
+                except Exception as e:
+                    logger.error(f"Failed memory duplicate check: {e}")
 
-            memory_id = await long_term.insert_memory(
-                content=exchange_text[:2000],
-                category=category,
-                importance=importance
-            )
-            if memory_id > 0:
-                logger.info(
-                    f"Saved long-term memory "
-                    f"[ID:{memory_id} | Cat:{category} | Score:{importance:.2f}]"
-                )
-                # Also embed into the vector store for semantic retrieval
-                from .semantic_memory import vector_store
-                await vector_store.add_memory(
-                    memory_id=memory_id,
-                    text=exchange_text[:2000],
+                memory_id = await long_term.insert_memory(
+                    content=exchange_text[:2000],
                     category=category,
                     importance=importance
                 )
-                # Trigger background graph extraction asynchronously
-                try:
-                    from .graph_extractor import extract_and_save_graph
-                    asyncio.create_task(extract_and_save_graph(exchange_text))
-                except Exception as ge_err:
-                    logger.error(f"Failed to start background graph extraction: {ge_err}")
+                if memory_id > 0:
+                    logger.info(
+                        f"Saved long-term memory "
+                        f"[ID:{memory_id} | Cat:{category} | Score:{importance:.2f}]"
+                    )
+                    # Also embed into the vector store for semantic retrieval
+                    from .semantic_memory import vector_store
+                    await vector_store.add_memory(
+                        memory_id=memory_id,
+                        text=exchange_text[:2000],
+                        category=category,
+                        importance=importance
+                    )
+                    # Accumulate and batch graph extraction
+                    cls._graph_extraction_buffer.append(exchange_text)
+                    batch_size = int(os.getenv("FRIDAY_MEMORY_GRAPH_BATCH_SIZE", "5"))
+                    if len(cls._graph_extraction_buffer) >= batch_size:
+                        batch_text = "\n---\n".join(cls._graph_extraction_buffer)
+                        cls._graph_extraction_buffer.clear()
+                        # Trigger background graph extraction asynchronously
+                        try:
+                            from .graph_extractor import extract_and_save_graph
+                            asyncio.create_task(extract_and_save_graph(batch_text))
+                        except Exception as ge_err:
+                            logger.error(f"Failed to start background graph extraction: {ge_err}")
         else:
             logger.debug(f"Discarded low-importance exchange [Score:{importance:.2f}]")
 

@@ -17,6 +17,14 @@
   box-shadow: 0 0 0 3px var(--primary-dim), var(--shadow-glass-md);
 }
 
+/* ── Mobile: Compact Padding ── */
+@media (max-width: 768px) {
+  .composer {
+    gap: 8px;
+    padding: 8px 10px;
+  }
+}
+
 .textarea {
   flex-grow: 1;
   background: transparent;
@@ -30,9 +38,20 @@
   max-height: 180px;
   outline: none;
   overflow-y: auto;
+  /* Mobile-friendly touch scrolling */
+  -webkit-overflow-scrolling: touch;
 }
 .textarea::placeholder {
   color: rgba(0, 0, 0, 0.25);
+}
+
+/* ── Mobile: Adjust Textarea Size ── */
+@media (max-width: 768px) {
+  .textarea {
+    font-size: 0.92rem;
+    padding: 8px 4px;
+    max-height: 140px;
+  }
 }
 
 .btn {
@@ -48,11 +67,27 @@
   color: var(--text-muted);
   flex-shrink: 0;
   transition: all 0.18s ease;
+  /* Larger touch target for mobile */
+  min-width: 40px;
+  min-height: 40px;
 }
 .btn:hover {
   background: var(--bg-glass-hover);
   border-color: var(--outline);
   color: var(--text);
+}
+.btn:active {
+  transform: scale(0.95);
+}
+
+/* ── Mobile: Larger Touch Targets ── */
+@media (max-width: 768px) {
+  .btn {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
 .upload:hover {
@@ -83,6 +118,9 @@
   flex-shrink: 0;
   cursor: pointer;
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  /* Larger touch target for mobile */
+  min-width: 40px;
+  min-height: 40px;
 }
 .voiceBtn:hover {
   background: var(--primary-dim);
@@ -90,6 +128,19 @@
   color: var(--primary);
   transform: translateY(-1px);
   box-shadow: var(--shadow-glass);
+}
+.voiceBtn:active {
+  transform: translateY(0) scale(0.94);
+}
+
+/* ── Mobile: Larger Voice Button ── */
+@media (max-width: 768px) {
+  .voiceBtn {
+    width: 48px;
+    height: 48px;
+    min-width: 48px;
+    min-height: 48px;
+  }
 }
 
 .voiceBtnActive {
@@ -146,14 +197,30 @@
   background: var(--primary);
   border: none;
   color: #000;
+  /* Larger touch target for mobile */
+  min-width: 44px;
+  min-height: 44px;
 }
 .send:hover:not(:disabled) {
   opacity: 0.88;
   box-shadow: 0 4px 20px var(--primary-dim);
 }
+.send:active:not(:disabled) {
+  transform: scale(0.96);
+}
 .send:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* ── Mobile: Larger Send Button ── */
+@media (max-width: 768px) {
+  .send {
+    width: 50px;
+    height: 50px;
+    min-width: 50px;
+    min-height: 50px;
+  }
 }
 
 .uploadToast {

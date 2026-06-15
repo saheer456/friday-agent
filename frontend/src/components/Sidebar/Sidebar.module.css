@@ -64,6 +64,9 @@
   color: var(--primary);
   border-color: var(--primary-border);
 }
+.closeBtn:active {
+  transform: scale(0.95);
+}
 
 .newChatBtn {
   display: flex;
@@ -85,6 +88,9 @@
   opacity: 0.88;
   transform: translateY(-1px);
   box-shadow: 0 8px 24px var(--primary-dim);
+}
+.newChatBtn:active {
+  transform: translateY(0) scale(0.97);
 }
 
 .sessionList {
@@ -122,6 +128,9 @@
 .sessionItem:hover {
   background: var(--bg-glass-hover);
   border-color: var(--outline);
+}
+.sessionItem:active {
+  transform: scale(0.98);
 }
 
 .sessionItem.active {

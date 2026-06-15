@@ -80,3 +80,41 @@ DROP TRIGGER IF EXISTS trg_update_session_message_count ON messages;
 CREATE TRIGGER trg_update_session_message_count
 AFTER INSERT OR DELETE ON messages
 FOR EACH ROW EXECUTE FUNCTION update_session_message_count();
+
+-- 7. MEMORIES TABLE (LONG TERM MEMORY)
+CREATE TABLE IF NOT EXISTS memories (
+    id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    content        TEXT NOT NULL,
+    category       TEXT NOT NULL,
+    importance     REAL DEFAULT 0.5,
+    created_at     TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE memories ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN DROP POLICY IF EXISTS memories_all_access ON memories; CREATE POLICY memories_all_access ON memories FOR ALL USING (true); END $$;
+
+-- 8. KNOWLEDGE GRAPH TABLES
+CREATE TABLE IF NOT EXISTS graph_nodes (
+    id             TEXT PRIMARY KEY,
+    name           TEXT NOT NULL,
+    type           TEXT NOT NULL,
+    description    TEXT
+);
+ALTER TABLE graph_nodes ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN DROP POLICY IF EXISTS graph_nodes_all_access ON graph_nodes; CREATE POLICY graph_nodes_all_access ON graph_nodes FOR ALL USING (true); END $$;
+
+CREATE TABLE IF NOT EXISTS graph_edges (
+    source         TEXT REFERENCES graph_nodes(id) ON DELETE CASCADE,
+    target         TEXT REFERENCES graph_nodes(id) ON DELETE CASCADE,
+    relation       TEXT NOT NULL,
+    weight         REAL DEFAULT 1.0,
+    PRIMARY KEY (source, target, relation)
+);
+ALTER TABLE graph_edges ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN DROP POLICY IF EXISTS graph_edges_all_access ON graph_edges; CREATE POLICY graph_edges_all_access ON graph_edges FOR ALL USING (true); END $$;
+CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source);
+CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target);
+
+-- 9. TRIGRAM SEARCH EXTENSION & INDEX
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS idx_messages_content_trgm ON messages USING GIN (content gin_trgm_ops);
+
